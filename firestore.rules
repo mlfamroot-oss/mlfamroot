@@ -1,0 +1,96 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function memberPath(familyId, userId) {
+      return /databases/$(database)/documents/families/$(familyId)/members/$(userId);
+    }
+
+    function isApprovedMember(familyId) {
+      return signedIn()
+        && exists(memberPath(familyId, request.auth.uid))
+        && get(memberPath(familyId, request.auth.uid)).data.status == 'approved';
+    }
+
+    function hasRole(familyId, allowedRoles) {
+      return isApprovedMember(familyId)
+        && get(memberPath(familyId, request.auth.uid)).data.role in allowedRoles;
+    }
+
+    function canEditPeople(familyId) {
+      return hasRole(familyId, ['owner', 'admin', 'contributor']);
+    }
+
+    function canManageFamily(familyId) {
+      return hasRole(familyId, ['owner', 'admin']);
+    }
+
+    function validPerson(person) {
+      return person.keys().hasAll([
+          'fullName', 'tamilName', 'gender', 'birthYear', 'lifeStatus', 'generation',
+          'branch', 'place', 'familyRole', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && person.keys().hasOnly([
+          'fullName', 'tamilName', 'gender', 'birthYear', 'lifeStatus', 'generation',
+          'branch', 'place', 'familyRole', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && person.fullName is string
+        && person.fullName.size() > 0
+        && person.gender in ['male', 'female', 'other', 'unknown']
+        && person.lifeStatus in ['living', 'deceased', 'unknown']
+        && person.generation is int
+        && person.generation >= 1
+        && person.branch is string
+        && person.createdBy is string;
+    }
+
+    match /families/{familyId} {
+      allow read: if isApprovedMember(familyId);
+      // Family creation, membership grants, and role changes are provisioned by an owner.
+      allow create, update, delete: if false;
+
+      match /members/{memberId} {
+        allow get: if signedIn() && memberId == request.auth.uid
+          || (isApprovedMember(familyId) && canManageFamily(familyId));
+        allow list: if canManageFamily(familyId);
+        // Client-side users cannot grant themselves or others access or change roles.
+        allow create, update, delete: if false;
+      }
+
+      match /people/{personId} {
+        allow read: if isApprovedMember(familyId);
+        allow create: if canEditPeople(familyId)
+          && validPerson(request.resource.data)
+          && request.resource.data.createdBy == request.auth.uid;
+        allow update: if canEditPeople(familyId)
+          && validPerson(request.resource.data)
+          && request.resource.data.createdBy == resource.data.createdBy;
+        allow delete: if canManageFamily(familyId);
+      }
+
+      match /relationships/{relationshipId} {
+        allow read: if isApprovedMember(familyId);
+        allow create: if canManageFamily(familyId)
+          && request.resource.data.keys().hasAll(['fromId', 'toId', 'relationshipType', 'status', 'createdBy', 'createdAt'])
+          && request.resource.data.keys().hasOnly(['fromId', 'toId', 'relationshipType', 'status', 'createdBy', 'createdAt'])
+          && request.resource.data.fromId is string
+          && request.resource.data.toId is string
+          && request.resource.data.fromId != request.resource.data.toId
+          && request.resource.data.relationshipType in ['parent', 'spouse']
+          && request.resource.data.status == 'approved'
+          && request.resource.data.createdBy == request.auth.uid
+          && exists(/databases/$(database)/documents/families/$(familyId)/people/$(request.resource.data.fromId))
+          && exists(/databases/$(database)/documents/families/$(familyId)/people/$(request.resource.data.toId));
+        allow update: if false;
+        allow delete: if canManageFamily(familyId);
+      }
+
+      match /{document=**} {
+        allow read, write: if false;
+      }
+    }
+  }
+}
