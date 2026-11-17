@@ -1,5 +1,5 @@
 import {
-  addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, updateDoc, writeBatch,
+  addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebaseClient";
 
@@ -154,6 +154,25 @@ export async function updateRelationship(familyId, relationshipId, relationship)
 
 export async function deleteRelationship(familyId, relationshipId) {
   await deleteDoc(doc(db, "families", familyId, "relationships", relationshipId));
+}
+
+export async function deletePersonAndRelationships(familyId, personId) {
+  const relationships = familyCollection(familyId, "relationships");
+  const [asParent, asChild] = await Promise.all([
+    getDocs(query(relationships, where("fromId", "==", personId))),
+    getDocs(query(relationships, where("toId", "==", personId))),
+  ]);
+  const links = new Map([...asParent.docs, ...asChild.docs].map(snapshot => [snapshot.id, snapshot.ref]));
+  const refs = [...links.values()];
+  // Firestore limits a write batch to 500 operations. Remove links in smaller chunks,
+  // then delete the person only after every relationship cleanup batch succeeds.
+  for (let start = 0; start < refs.length; start += 450) {
+    const batch = writeBatch(db);
+    refs.slice(start, start + 450).forEach(ref => batch.delete(ref));
+    await batch.commit();
+  }
+  await deleteDoc(doc(db, "families", familyId, "people", personId));
+  return {removedRelationships:refs.length};
 }
 
 export async function requestFamilyAccess(familyId, user) {

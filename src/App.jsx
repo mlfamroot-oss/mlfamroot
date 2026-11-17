@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { auth, familyId, firebaseConfigured, googleProvider } from "./firebaseClient";
 import { suggestTamilName, romanizeTamil } from "./nameTransliteration";
-import { approveJoinRequest, deleteRelationship, isDuplicatePerson, loadFamily, rejectJoinRequest, requestFamilyAccess, savePerson, saveRelationships, updateRelationship, watchFamily, watchJoinRequests } from "./familyRepository";
+import { approveJoinRequest, deletePersonAndRelationships, deleteRelationship, isDuplicatePerson, loadFamily, rejectJoinRequest, requestFamilyAccess, savePerson, saveRelationships, updateRelationship, watchFamily, watchJoinRequests } from "./familyRepository";
 import { getRelationshipLabel } from "./kinship";
 
 const copy = {
@@ -91,25 +91,28 @@ function createsParentCycle(relationships, fromId, toId, ignoredId) {
   return false;
 }
 
-function PersonCard({person, selected, onClick, compact=false, lang="en"}) {
-  return <button className={`person-card ${selected ? "selected" : ""} ${compact ? "compact" : ""}`} onClick={onClick}>
-    <Avatar person={person} />
-    <span className="person-copy">
-      <strong>{lang==="ta" && person.tamil ? person.tamil : person.name}</strong>
-      <small>{person.birthYear || "Year unknown"} · {person.status}</small>
-    </span>
-    {person.status==="Deceased" && <span className="status-dot deceased-dot" title="Deceased"/>}
-  </button>;
+function PersonCard({person, selected, onClick, compact=false, lang="en", canDelete=false, onDelete, deleteLabel="Delete member"}) {
+  return <div className={`person-card-wrap ${compact ? "compact" : ""}`}>
+    <button type="button" className={`person-card ${selected ? "selected" : ""} ${compact ? "compact" : ""}`} onClick={onClick}>
+      <Avatar person={person} />
+      <span className="person-copy">
+        <strong>{lang==="ta" && person.tamil ? person.tamil : person.name}</strong>
+        <small>{(lang==="ta"?person.name:person.tamil)?`${lang==="ta"?person.name:person.tamil} · `:""}{person.birthYear || (lang==="ta"?"ஆண்டு தெரியவில்லை":"Year unknown")} · {person.status}</small>
+      </span>
+      {person.status==="Deceased" && <span className="status-dot deceased-dot" title="Deceased"/>}
+    </button>
+    {canDelete&&<button type="button" className="person-delete-btn" title={deleteLabel} aria-label={`${deleteLabel}: ${person.name}`} onClick={event=>{event.stopPropagation();onDelete?.(person)}}><Trash2 size={14}/></button>}
+  </div>;
 }
 
-function FamilyTreeView({people, selectedId, onSelect, lang}) {
+function FamilyTreeView({people, selectedId, onSelect, lang, canDelete=false, onDelete, deleteLabel}) {
   const generations = [...new Set(people.map(person => person.generation))].sort((a,b)=>a-b);
   const getNames = ids => (ids || []).map(id => people.find(person => person.id === id)).filter(Boolean).map(person => lang === "ta" && person.tamil ? person.tamil : person.name);
   return <div className="family-tree-view">
     {generations.map(generation => <section className="generation-lane" key={generation}>
       <div className="generation-title">{lang === "ta" ? `தலைமுறை ${generation}` : `Generation ${generation}`}</div>
       <div className="generation-members">{people.filter(person => person.generation === generation).map(person => <div className="tree-person-wrap" key={person.id}>
-        <PersonCard person={person} selected={selectedId === person.id} onClick={() => onSelect(person.id)} lang={lang}/>
+        <PersonCard person={person} selected={selectedId === person.id} onClick={() => onSelect(person.id)} lang={lang} canDelete={canDelete} onDelete={onDelete} deleteLabel={deleteLabel}/>
         <div className="tree-relation-note">{getNames(person.parentIds).length ? `← ${getNames(person.parentIds).join(" · ")}` : (getNames(person.spouseIds).length ? `♥ ${getNames(person.spouseIds).join(" · ")}` : person.branch)}</div>
       </div>)}</div>
     </section>)}
@@ -307,6 +310,7 @@ function App() {
   const [showLink, setShowLink] = useState(false);
   const [editingRelationship, setEditingRelationship] = useState(null);
   const [pendingDeleteRelationship, setPendingDeleteRelationship] = useState(null);
+  const [pendingDeletePerson, setPendingDeletePerson] = useState(null);
   const [linkMode, setLinkMode] = useState("child");
   const [linkTargetId, setLinkTargetId] = useState("");
   const [linkContextParentId, setLinkContextParentId] = useState("");
@@ -600,6 +604,23 @@ function App() {
     }
   }
 
+  async function removePerson() {
+    if (!isAdmin || !pendingDeletePerson) return;
+    const target = pendingDeletePerson;
+    setSaving(true); setAppError("");
+    try {
+      await deletePersonAndRelationships(familyId,target.id);
+      setRelationships(current=>current.filter(item=>item.fromId!==target.id&&item.toId!==target.id));
+      setPeople(current=>current.filter(person=>person.id!==target.id));
+      if (selectedId===target.id) setSelectedId(people.find(person=>person.id!==target.id)?.id || "");
+      setPendingDeletePerson(null);
+    } catch (error) {
+      setAppError(error.code==="permission-denied" || /permission|insufficient/i.test(error.message||"")
+        ? (lang==="ta"?"உறுப்பினரை நீக்க உங்களுக்கு அனுமதி இல்லை. குடும்ப உரிமையாளர் அல்லது நிர்வாகியிடம் கேளுங்கள்.":"You do not have permission to delete family members. Ask a family owner or admin.")
+        : (lang==="ta"?"உறுப்பினரை நீக்க முடியவில்லை. மீண்டும் முயற்சிக்கவும்.":"Could not delete this member. Please try again."));
+    } finally { setSaving(false); }
+  }
+
   async function submitAccessRequest() {
     if (!authUser || requestingAccess) return;
     setRequestingAccess(true);
@@ -702,7 +723,7 @@ function App() {
               <select value={branch} onChange={e=>setBranch(e.target.value)}><option value="All">{t.branch}: All</option>{branches.map(b=><option key={b}>{b}</option>)}</select>
               <select value={status} onChange={e=>setStatus(e.target.value)}><option value="All">{t.status}: All</option><option value="Living">{t.living}</option><option value="Deceased">{t.deceased}</option></select>
             </div>
-            {view === "graph" && isAdmin ? <div className="tree-canvas graph-canvas">{graphPeople.length ? <FamilyGraph people={graphPeople} selectedId={selectedId} onSelect={setSelectedId} lang={lang} theme={theme} query={query}/> : <p className="graph-empty">{canEditPeople ? "Add a family member to start your graph." : t.empty}</p>}</div> : view === "circles" ? <div className="tree-canvas circular-canvas">{graphPeople.length ? <GenerationsCircleView people={graphPeople} selectedId={selectedId} onSelect={setSelectedId} lang={lang}/> : <p className="graph-empty">{canEditPeople ? "Add a family member to start your family tree." : t.empty}</p>}</div> : <div className="tree-canvas conventional-canvas">{graphPeople.length ? <FamilyTreeView people={graphPeople} selectedId={selectedId} onSelect={setSelectedId} lang={lang}/> : <p className="graph-empty">{canEditPeople ? "Add a family member to start your family tree." : t.empty}</p>}</div>}
+            {view === "graph" && isAdmin ? <div className="tree-canvas graph-canvas">{graphPeople.length ? <FamilyGraph people={graphPeople} selectedId={selectedId} onSelect={setSelectedId} lang={lang} theme={theme} query={query}/> : <p className="graph-empty">{canEditPeople ? "Add a family member to start your graph." : t.empty}</p>}</div> : view === "circles" ? <div className="tree-canvas circular-canvas">{graphPeople.length ? <GenerationsCircleView people={graphPeople} selectedId={selectedId} onSelect={setSelectedId} lang={lang}/> : <p className="graph-empty">{canEditPeople ? "Add a family member to start your family tree." : t.empty}</p>}</div> : <div className="tree-canvas conventional-canvas">{graphPeople.length ? <FamilyTreeView people={graphPeople} selectedId={selectedId} onSelect={setSelectedId} lang={lang} canDelete={isAdmin} onDelete={person=>{setAppError("");setPendingDeletePerson(person)}} deleteLabel={lang==="ta"?"உறுப்பினரை நீக்கு":"Delete member"}/> : <p className="graph-empty">{canEditPeople ? "Add a family member to start your family tree." : t.empty}</p>}</div>}
             <div className="tree-footer"><span><i className="legend-dot male-dot"/> Male <i className="legend-dot female-dot"/> Female <i className="legend-dot deceased-dot"/> Deceased</span><span>{filtered.length} matching members</span></div>
           </div>
           <aside className="profile-panel panel">
@@ -755,6 +776,7 @@ function App() {
       {appError && <p className="connection-error">{appError}</p>}
       <div className="modal-actions"><button type="button" className="secondary-btn" onClick={closeRelationshipModal}>{t.cancel}</button><button type="submit" className="primary-btn" disabled={saving||!linkTargetId}><Link2 size={16}/>{saving?"Saving…":editingRelationship?t.updateLink:t.saveLink}</button></div>
     </form></div>}
+    {pendingDeletePerson && <div className="modal-backdrop" onClick={()=>!saving&&setPendingDeletePerson(null)}><div className="modal confirm-delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-person-title" onClick={e=>e.stopPropagation()}><div className="modal-heading"><div><h2 id="delete-person-title">{lang==="ta"?"இந்தக் குடும்ப உறுப்பினரை நீக்கவா?":"Delete this family member?"}</h2><p>{lang==="ta"?`${pendingDeletePerson.name} மற்றும் அவருடன் இணைக்கப்பட்டுள்ள அனைத்து உறவுகளும் நிரந்தரமாக நீக்கப்படும். மீட்டெடுக்க முடியாது.`:`${pendingDeletePerson.name} and all their family connections will be permanently deleted. This cannot be undone.`}</p></div><button type="button" className="icon-btn" aria-label={t.cancel} onClick={()=>setPendingDeletePerson(null)} disabled={saving}><X size={18}/></button></div>{appError&&<p className="connection-error" role="alert">{appError}</p>}<div className="modal-actions"><button type="button" className="secondary-btn" onClick={()=>{setPendingDeletePerson(null);setAppError("")}} disabled={saving}>{t.cancel}</button><button type="button" className="danger-btn" onClick={removePerson} disabled={saving}><Trash2 size={15}/>{saving?(lang==="ta"?"நீக்குகிறது…":"Deleting…"):(lang==="ta"?"உறுப்பினரை நீக்கு":"Delete member")}</button></div></div></div>}
     {pendingDeleteRelationship && <div className="modal-backdrop" onClick={()=>setPendingDeleteRelationship(null)}><div className="modal confirm-delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-connection-title" onClick={e=>e.stopPropagation()}><div className="modal-heading"><div><h2 id="delete-connection-title">{t.removeConnectionTitle}</h2><p>{t.removeConnectionHint}</p></div><button type="button" className="icon-btn" onClick={()=>setPendingDeleteRelationship(null)}><X size={18}/></button></div><div className="modal-actions"><button type="button" className="secondary-btn" onClick={()=>setPendingDeleteRelationship(null)}>{t.cancel}</button><button type="button" className="danger-btn" onClick={removeConnection} disabled={saving}><Trash2 size={15}/>{saving?"Removing…":t.remove}</button></div></div></div>}
   </div>;
 }
