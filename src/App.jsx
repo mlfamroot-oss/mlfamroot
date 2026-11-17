@@ -10,7 +10,8 @@ import {
 } from "lucide-react";
 import { auth, familyId, firebaseConfigured, googleProvider } from "./firebaseClient";
 import { suggestTamilName, romanizeTamil } from "./nameTransliteration";
-import { approveJoinRequest, deleteRelationship, isDuplicatePerson, loadFamily, rejectJoinRequest, requestFamilyAccess, savePerson, saveRelationship, updateRelationship, watchFamily, watchJoinRequests } from "./familyRepository";
+import { approveJoinRequest, deleteRelationship, isDuplicatePerson, loadFamily, rejectJoinRequest, requestFamilyAccess, savePerson, saveRelationships, updateRelationship, watchFamily, watchJoinRequests } from "./familyRepository";
+import { getRelationshipLabel } from "./kinship";
 
 const copy = {
   en: {
@@ -35,6 +36,7 @@ const copy = {
     setupTitle:"Connect ROOTS to Firebase", setupSub:"Add your Firebase web app settings and family ID to the local environment file, then restart Vite.",
     setupSteps:"In Firebase Console, enable Google sign-in, create a Firestore database, publish the included firestore.rules, then add your first owner membership.",
     loading:"Loading your family space…", addLink:"Add relationship", parentOf:"Parent of", childOf:"Child of", spouseOf:"Spouse of", choosePerson:"Choose a person",
+    relationLabel:"Relationship", siblingOf:"Sibling (brother / sister)", grandparentOf:"Grandparent of", grandchildOf:"Grandchild of", auntUncleOf:"Aunt / uncle of", cousinOf:"Cousin of", contextParent:"Parent in this family line", sharedParent:"Shared parent", sharedGrandparent:"Shared grandparent", relativeParent:"Parent of this relative", relationshipPathHint:"Extended relationships are created from parent and spouse records. ROOTS will ask for the family path it needs.", addParentFirst:"To add a sibling, first record at least one parent for this person.",
     saveLink:"Save relationship", editLink:"Edit connection", updateLink:"Save changes", removeConnection:"Remove connection", removeConnectionTitle:"Remove this family connection?", removeConnectionHint:"This only removes the relationship; both people remain in the family.", remove:"Remove connection", parentCycleError:"This would create a parent-child loop. Check the existing connections first.", duplicatePerson:"A person with this name and birth details is already recorded. Check the existing profile before adding.", duplicateConfirm:"I checked the existing profile; this is a different person.", possibleDuplicate:"A family member has the same name. Confirm this is a different person before adding.", connectionError:"Could not load family data. Check the Firebase setup and Firestore rules."
   },
   ta: {
@@ -59,6 +61,7 @@ const copy = {
     setupTitle:"ROOTS-ஐ Firebase-உடன் இணைக்கவும்", setupSub:"Firebase வலைச் செயலி அமைப்புகளையும் குடும்ப ID-யையும் உள்ளூர் environment கோப்பில் சேர்த்து Vite-ஐ மீண்டும் தொடங்கவும்.",
     setupSteps:"Firebase Console-இல் Google உள்நுழைவை இயக்கி, Firestore தரவுத்தளத்தை உருவாக்கி, firestore.rules-ஐ வெளியிட்டு, முதல் உரிமையாளர் உறுப்பினர் பதிவைச் சேர்க்கவும்.",
     loading:"குடும்ப இடத்தை ஏற்றுகிறது…", addLink:"உறவைச் சேர்க்க", parentOf:"பெற்றோர்", childOf:"குழந்தை", spouseOf:"துணைவர்", choosePerson:"ஒருவரைத் தேர்ந்தெடுக்கவும்",
+    relationLabel:"உறவு", siblingOf:"உடன்பிறப்பு", grandparentOf:"தாத்தா / பாட்டி", grandchildOf:"பேரக்குழந்தை", auntUncleOf:"அத்தை / மாமா", cousinOf:"ஒன்றுவிட்ட உறவினர்", contextParent:"இந்த குடும்பப் பாதையில் பெற்றோர்", sharedParent:"பொதுப் பெற்றோர்", sharedGrandparent:"பொதுவான தாத்தா / பாட்டி", relativeParent:"இந்த உறவினரின் பெற்றோர்", relationshipPathHint:"விரிவான உறவுகள் பெற்றோர் மற்றும் துணைவர் பதிவுகளிலிருந்து உருவாக்கப்படும்.", addParentFirst:"உடன்பிறப்பைச் சேர்க்க முதலில் ஒருவருக்காவது பெற்றோர் உறவைப் பதிவு செய்யுங்கள்.",
     saveLink:"உறவைச் சேமி", editLink:"உறவைத் திருத்து", updateLink:"மாற்றங்களைச் சேமி", removeConnection:"உறவை நீக்கு", removeConnectionTitle:"இந்தக் குடும்ப உறவை நீக்கவா?", removeConnectionHint:"உறவு மட்டும் நீக்கப்படும்; இருவரும் குடும்பத்தில் இருப்பார்கள்.", remove:"உறவை நீக்கு", parentCycleError:"இது பெற்றோர்–குழந்தை உறவு வட்டத்தை உருவாக்கும். ஏற்கனவே உள்ள உறவுகளைச் சரிபார்க்கவும்.", duplicatePerson:"இந்தப் பெயரும் பிறந்த விவரங்களும் கொண்ட பதிவு ஏற்கனவே உள்ளது. சேர்ப்பதற்கு முன் பழைய பதிவைச் சரிபார்க்கவும்.", duplicateConfirm:"பழைய பதிவைச் சரிபார்த்தேன்; இது வேறு நபர்.", possibleDuplicate:"அதே பெயரில் ஒருவர் உள்ளார். புதிய நபர் வேறு நபர் என்பதை உறுதிப்படுத்தவும்.", connectionError:"குடும்பத் தரவை ஏற்ற முடியவில்லை. Firebase அமைப்புகளையும் விதிகளையும் சரிபார்க்கவும்."
   }
 };
@@ -306,6 +309,9 @@ function App() {
   const [pendingDeleteRelationship, setPendingDeleteRelationship] = useState(null);
   const [linkMode, setLinkMode] = useState("child");
   const [linkTargetId, setLinkTargetId] = useState("");
+  const [linkContextParentId, setLinkContextParentId] = useState("");
+  const [linkOtherParentId, setLinkOtherParentId] = useState("");
+  const [linkSharedParentId, setLinkSharedParentId] = useState("");
   const [saving, setSaving] = useState(false);
   const [lastNameField, setLastNameField] = useState("name");
   const [suggestingName, setSuggestingName] = useState(false);
@@ -436,6 +442,9 @@ function App() {
   const branches = [...new Set(people.map(p=>p.branch))];
   const generations = [...new Set(people.map(p=>String(p.generation)))].sort();
   const getPeople = ids => (ids||[]).map(id=>people.find(p=>p.id===id)).filter(Boolean);
+  const inferredRelations = selected ? people.filter(person => person.id !== selected.id &&
+    !(selected.parentIds || []).includes(person.id) && !(selected.children || []).includes(person.id) && !(selected.spouseIds || []).includes(person.id))
+    .map(person => ({person,label:getRelationshipLabel(person,selected,relationships,people,lang)})).filter(item=>item.label) : [];
   const connectionRow = (person, relationship) => <div className="profile-relation-row" key={relationship?.id || person.id}>
     <PersonCard person={person} compact onClick={()=>setSelectedId(person.id)} lang={lang}/>
     {isAdmin && relationship && <><button type="button" className="icon-btn edit-connection-btn" title={t.editLink} aria-label={t.editLink} onClick={()=>openRelationshipEditor(relationship, person.id)}><Settings2 size={14}/></button><button type="button" className="icon-btn delete-connection-btn" title={t.removeConnection} aria-label={t.removeConnection} onClick={()=>setPendingDeleteRelationship(relationship)}><Trash2 size={14}/></button></>}
@@ -496,27 +505,54 @@ function App() {
   async function addRelationship(e) {
     e.preventDefault();
     if (!isAdmin || !authUser || !selected || !linkTargetId) return;
-    let fromId = selected.id;
-    let toId = linkTargetId;
-    if (linkMode === "parent") { fromId = linkTargetId; toId = selected.id; }
-    if (linkMode === "spouse" && fromId.localeCompare(toId) > 0) [fromId, toId] = [toId, fromId];
-    const relationshipType = linkMode === "spouse" ? "spouse" : "parent";
-    if (fromId === toId) { setAppError("A person cannot be connected to themselves."); return; }
-    if (relationshipType === "parent" && createsParentCycle(relationships, fromId, toId, editingRelationship?.id)) { setAppError(t.parentCycleError); return; }
-    const existsAlready = relationships.some(item => item.id !== editingRelationship?.id && item.relationshipType === relationshipType &&
-      (relationshipType === "spouse"
-        ? (item.fromId === fromId && item.toId === toId) || (item.fromId === toId && item.toId === fromId)
-        : item.fromId === fromId && item.toId === toId));
-    if (existsAlready) { setAppError("That relationship is already recorded."); return; }
     setSaving(true); setAppError("");
     try {
-      const relationData = {fromId, toId, relationshipType};
+      let edges = [];
+      const edge = (fromId,toId,relationshipType="parent") => edges.push({fromId,toId,relationshipType});
+      if (linkMode === "child") edge(selected.id,linkTargetId);
+      else if (linkMode === "parent") edge(linkTargetId,selected.id);
+      else if (linkMode === "spouse") edge(selected.id,linkTargetId,"spouse");
+      else if (linkMode === "sibling") {
+        if (!linkSharedParentId || !(selected.parentIds || []).includes(linkSharedParentId)) throw new Error(`${t.addParentFirst} Choose a recorded parent as the shared parent.`);
+        edge(linkSharedParentId,linkTargetId);
+      } else if (linkMode === "grandparent") {
+        if (!linkOtherParentId) throw new Error("Choose the parent through whom this grandparent is connected.");
+        edge(selected.id,linkOtherParentId);
+        edge(linkOtherParentId,linkTargetId);
+      } else if (linkMode === "grandchild") {
+        if (!linkContextParentId || !(selected.parentIds || []).includes(linkContextParentId)) throw new Error("Choose which recorded parent this grandchild relationship belongs to.");
+        edge(linkTargetId,linkContextParentId);
+      } else if (linkMode === "aunt_uncle") {
+        if (!linkContextParentId || !linkSharedParentId) throw new Error("Choose the person's parent and one of that parent's recorded parents (the shared grandparent).");
+        if (!(people.find(p=>p.id===linkTargetId)?.parentIds || []).includes(linkContextParentId) || !(people.find(p=>p.id===linkContextParentId)?.parentIds || []).includes(linkSharedParentId)) throw new Error("Choose a valid parent and shared grandparent from the existing family connections.");
+        edge(linkSharedParentId,selected.id);
+      } else if (linkMode === "cousin") {
+        if (!linkContextParentId || !linkOtherParentId || !linkSharedParentId) throw new Error("Choose each cousin's parent and a shared grandparent to establish the family path.");
+        if (!(selected.parentIds || []).includes(linkContextParentId) || !(people.find(p=>p.id===linkContextParentId)?.parentIds || []).includes(linkSharedParentId)) throw new Error("Choose a valid parent and shared grandparent for this person.");
+        edge(linkSharedParentId,linkOtherParentId);
+        edge(linkOtherParentId,linkTargetId);
+      }
+      if (editingRelationship && edges.length !== 1) throw new Error("Extended family links are added through the family path wizard; edit the underlying parent or spouse connection directly.");
+      const canonicalize = item => item.relationshipType === "spouse" && item.fromId.localeCompare(item.toId)>0 ? {...item,fromId:item.toId,toId:item.fromId} : item;
+      edges = edges.map(canonicalize);
+      const working = relationships.filter(item=>item.id!==editingRelationship?.id).map(item=>({...item}));
+      const newEdges = [];
+      for (const item of edges) {
+        if (item.fromId === item.toId) throw new Error("A person cannot be connected to themselves.");
+        const exists = working.some(current=>current.relationshipType===item.relationshipType && (current.fromId===item.fromId && current.toId===item.toId || item.relationshipType==="spouse" && current.fromId===item.toId && current.toId===item.fromId));
+        if (exists) continue;
+        if (item.relationshipType === "parent" && createsParentCycle(working,item.fromId,item.toId)) throw new Error(t.parentCycleError);
+        working.push(item); newEdges.push(item);
+      }
       if (editingRelationship) {
-        const relation = await updateRelationship(familyId, editingRelationship.id, relationData);
-        setRelationships(prev => prev.map(item => item.id === relation.id ? {...item, ...relation} : item));
+        const relation = edges[0];
+        if (!relation) throw new Error("That relationship is already recorded.");
+        const updated = await updateRelationship(familyId,editingRelationship.id,relation);
+        setRelationships(prev=>prev.map(item=>item.id===updated.id?{...item,...updated}:item));
       } else {
-        const relation = await saveRelationship(familyId, authUser, relationData);
-        setRelationships(prev => [...prev, relation]);
+        if (!newEdges.length) throw new Error("That relationship is already recorded.");
+        const saved = await saveRelationships(familyId,authUser,newEdges);
+        setRelationships(prev=>[...prev,...saved]);
       }
       closeRelationshipModal();
     } catch (error) { setAppError(error.message || t.connectionError); }
@@ -527,6 +563,7 @@ function App() {
     setEditingRelationship(null);
     setLinkMode("child");
     setLinkTargetId("");
+    setLinkContextParentId(""); setLinkOtherParentId(""); setLinkSharedParentId("");
     setAppError("");
     setShowLink(true);
   }
@@ -535,6 +572,7 @@ function App() {
     setEditingRelationship(relationship);
     setLinkMode(relationship.relationshipType === "spouse" ? "spouse" : relationship.fromId === selected?.id ? "child" : "parent");
     setLinkTargetId(otherId);
+    setLinkContextParentId(""); setLinkOtherParentId(""); setLinkSharedParentId("");
     setAppError("");
     setShowLink(true);
   }
@@ -543,6 +581,7 @@ function App() {
     setShowLink(false);
     setEditingRelationship(null);
     setLinkTargetId("");
+    setLinkContextParentId(""); setLinkOtherParentId(""); setLinkSharedParentId("");
     setAppError("");
   }
 
@@ -674,6 +713,7 @@ function App() {
               <div className="relation-block"><h3>{t.parents}</h3>{getPeople(selected.parentIds).length?getPeople(selected.parentIds).map(p=>connectionRow(p,relationships.find(r=>r.relationshipType==="parent"&&r.fromId===p.id&&r.toId===selected.id))):<p className="muted">No parent links recorded</p>}</div>
               <div className="relation-block"><h3>{t.spouse}</h3>{getPeople(selected.spouseIds).length?getPeople(selected.spouseIds).map(p=>connectionRow(p,relationships.find(r=>r.relationshipType==="spouse"&&((r.fromId===selected.id&&r.toId===p.id)||(r.fromId===p.id&&r.toId===selected.id))))):<p className="muted">No spouse recorded</p>}</div>
               <div className="relation-block"><h3>{t.children}</h3>{getPeople(selected.children).length?getPeople(selected.children).map(p=>connectionRow(p,relationships.find(r=>r.relationshipType==="parent"&&r.fromId===selected.id&&r.toId===p.id))):<p className="muted">No children recorded</p>}</div>
+              {inferredRelations.length>0&&<div className="relation-block inferred-kinship"><h3>{lang==="ta"?"பிற உறவுகள்":"Other family connections"}</h3>{inferredRelations.map(({person,label})=><div className="kinship-line" key={person.id}><PersonCard person={person} compact onClick={()=>setSelectedId(person.id)} lang={lang}/><small>{label}</small></div>)}</div>}
             </>:<div className="empty-profile"><UserRound size={30}/><h3>{t.selectPerson}</h3><p>{t.selectSub}</p></div>}
           </aside>
         </section>}
@@ -704,8 +744,14 @@ function App() {
       <div className="modal-actions"><button type="button" className="secondary-btn" onClick={()=>setShowAdd(false)}>{t.cancel}</button><button type="submit" className="primary-btn" disabled={saving||(hasSimilarName&&!duplicateConfirmed)}><Plus size={16}/>{saving?"Saving…":t.save}</button></div>
     </form></div>}
     {showLink && selected && <div className="modal-backdrop" onClick={closeRelationshipModal}><form className="modal" onSubmit={addRelationship} onClick={e=>e.stopPropagation()}><div className="modal-heading"><div><h2>{editingRelationship?t.editLink:t.addLink}</h2><p>{lang==="ta"&&selected.tamil?selected.tamil:selected.name}</p></div><button type="button" className="icon-btn" onClick={closeRelationshipModal}><X size={18}/></button></div>
-      <label>Relationship<select value={linkMode} onChange={e=>setLinkMode(e.target.value)}><option value="child">{t.parentOf}</option><option value="parent">{t.childOf}</option><option value="spouse">{t.spouseOf}</option></select></label>
-      <label>{t.choosePerson}<select required value={linkTargetId} onChange={e=>setLinkTargetId(e.target.value)}><option value="">Select a family member…</option>{people.filter(person=>person.id!==selected.id).map(person=><option key={person.id} value={person.id}>{lang==="ta"&&person.tamil?person.tamil:person.name}</option>)}</select></label>
+      <label>{t.relationLabel}<select value={linkMode} onChange={e=>{setLinkMode(e.target.value);setLinkContextParentId("");setLinkOtherParentId("");setLinkSharedParentId("")}}><option value="child">{t.parentOf}</option><option value="parent">{t.childOf}</option><option value="spouse">{t.spouseOf}</option>{!editingRelationship&&<><option value="sibling">{t.siblingOf}</option><option value="grandparent">{t.grandparentOf}</option><option value="grandchild">{t.grandchildOf}</option><option value="aunt_uncle">{t.auntUncleOf}</option><option value="cousin">{t.cousinOf}</option></>}</select></label>
+      <label>{t.choosePerson}<select required value={linkTargetId} onChange={e=>{setLinkTargetId(e.target.value);setLinkContextParentId("");setLinkOtherParentId("");setLinkSharedParentId("")}}><option value="">Select a family member…</option>{people.filter(person=>person.id!==selected.id).map(person=><option key={person.id} value={person.id}>{lang==="ta"&&person.tamil?person.tamil:person.name}</option>)}</select></label>
+      {!editingRelationship&&["grandchild","aunt_uncle","cousin"].includes(linkMode)&&<label>{t.contextParent}<select required value={linkContextParentId} onChange={e=>{setLinkContextParentId(e.target.value);setLinkSharedParentId("")}}><option value="">Choose the family-line parent…</option>{getPeople(linkMode==="aunt_uncle"?people.find(person=>person.id===linkTargetId)?.parentIds:selected.parentIds).map(person=><option key={person.id} value={person.id}>{lang==="ta"&&person.tamil?person.tamil:person.name}</option>)}</select></label>}
+      {!editingRelationship&&linkMode==="sibling"&&<label>{t.sharedParent}<select required value={linkSharedParentId} onChange={e=>setLinkSharedParentId(e.target.value)}><option value="">Choose a shared recorded parent…</option>{getPeople(selected.parentIds).map(person=><option key={person.id} value={person.id}>{lang==="ta"&&person.tamil?person.tamil:person.name}</option>)}</select></label>}
+      {!editingRelationship&&linkMode==="aunt_uncle"&&<label>{t.sharedGrandparent}<select required value={linkSharedParentId} onChange={e=>setLinkSharedParentId(e.target.value)}><option value="">Choose a grandparent…</option>{getPeople(people.find(person=>person.id===linkContextParentId)?.parentIds).map(person=><option key={person.id} value={person.id}>{lang==="ta"&&person.tamil?person.tamil:person.name}</option>)}</select></label>}
+      {!editingRelationship&&["grandparent","cousin"].includes(linkMode)&&<label>{t.relativeParent}<select required value={linkOtherParentId} onChange={e=>setLinkOtherParentId(e.target.value)}><option value="">Choose the parent for this family path…</option>{people.filter(person=>person.id!==selected.id&&person.id!==linkTargetId).map(person=><option key={person.id} value={person.id}>{lang==="ta"&&person.tamil?person.tamil:person.name}</option>)}</select><small className="field-hint">{linkMode==="cousin"?"This person will be recorded as the cousin's parent, then linked through the shared grandparent.":"ROOTS will link this person as the grandparent of the selected relative through this parent."}</small></label>}
+      {!editingRelationship&&linkMode==="cousin"&&<label>{t.sharedGrandparent}<select required value={linkSharedParentId} onChange={e=>setLinkSharedParentId(e.target.value)}><option value="">Choose a recorded grandparent…</option>{getPeople(people.find(person=>person.id===linkContextParentId)?.parentIds).map(person=><option key={person.id} value={person.id}>{lang==="ta"&&person.tamil?person.tamil:person.name}</option>)}</select></label>}
+      {!editingRelationship&&["sibling","grandparent","grandchild","aunt_uncle","cousin"].includes(linkMode)&&<p className="field-hint relationship-path-hint">{t.relationshipPathHint}</p>}
       {appError && <p className="connection-error">{appError}</p>}
       <div className="modal-actions"><button type="button" className="secondary-btn" onClick={closeRelationshipModal}>{t.cancel}</button><button type="submit" className="primary-btn" disabled={saving||!linkTargetId}><Link2 size={16}/>{saving?"Saving…":editingRelationship?t.updateLink:t.saveLink}</button></div>
     </form></div>}

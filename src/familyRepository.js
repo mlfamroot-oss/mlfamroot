@@ -123,6 +123,25 @@ export async function saveRelationship(familyId, user, relationship) {
   return { id: snapshot.id, ...relation };
 }
 
+export async function saveRelationships(familyId, user, relationships) {
+  const batch = writeBatch(db);
+  const saved = relationships.map(relationship => {
+    const ref = doc(familyCollection(familyId, "relationships"));
+    const data = {
+      fromId: relationship.fromId,
+      toId: relationship.toId,
+      relationshipType: relationship.relationshipType,
+      status: "approved",
+      createdBy: user.uid,
+      createdAt: serverTimestamp(),
+    };
+    batch.set(ref, data);
+    return {id:ref.id,...data};
+  });
+  await batch.commit();
+  return saved;
+}
+
 export async function updateRelationship(familyId, relationshipId, relationship) {
   const fields = {
     fromId: relationship.fromId,
