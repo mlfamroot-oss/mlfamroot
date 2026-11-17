@@ -84,7 +84,18 @@ service cloud.firestore {
           && request.resource.data.createdBy == request.auth.uid
           && exists(/databases/$(database)/documents/families/$(familyId)/people/$(request.resource.data.fromId))
           && exists(/databases/$(database)/documents/families/$(familyId)/people/$(request.resource.data.toId));
-        allow update: if false;
+        allow update: if canManageFamily(familyId)
+          && request.resource.data.keys().hasAll(['fromId', 'toId', 'relationshipType', 'status', 'createdBy', 'createdAt'])
+          && request.resource.data.keys().hasOnly(['fromId', 'toId', 'relationshipType', 'status', 'createdBy', 'createdAt'])
+          && request.resource.data.fromId is string
+          && request.resource.data.toId is string
+          && request.resource.data.fromId != request.resource.data.toId
+          && request.resource.data.relationshipType in ['parent', 'spouse']
+          && request.resource.data.status == 'approved'
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.createdAt == resource.data.createdAt
+          && exists(/databases/$(database)/documents/families/$(familyId)/people/$(request.resource.data.fromId))
+          && exists(/databases/$(database)/documents/families/$(familyId)/people/$(request.resource.data.toId));
         allow delete: if canManageFamily(familyId);
       }
 

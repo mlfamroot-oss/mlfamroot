@@ -1,9 +1,21 @@
 import {
-  addDoc, collection, doc, getDoc, getDocs, onSnapshot, serverTimestamp, setDoc,
+  addDoc, collection, doc, getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, updateDoc,
 } from "firebase/firestore";
 import { db } from "./firebaseClient";
 
 const familyCollection = (familyId, name) => collection(db, "families", familyId, name);
+
+const normalizedName = value => String(value || "").normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
+
+export function isDuplicatePerson(existing, candidate) {
+  if (normalizedName(existing.name) !== normalizedName(candidate.name)) return false;
+  const existingYear = existing.birthYear ? Number(existing.birthYear) : null;
+  const candidateYear = candidate.birthYear ? Number(candidate.birthYear) : null;
+  if (existingYear && candidateYear) return existingYear === candidateYear;
+  const existingTamil = normalizedName(existing.tamil);
+  const candidateTamil = normalizedName(candidate.tamil);
+  return Boolean(existingTamil && candidateTamil && existingTamil === candidateTamil);
+}
 
 function mapFamilyRecords(peopleDocuments, relationshipDocuments) {
   const relationships = relationshipDocuments.map(snapshot => ({ id: snapshot.id, ...snapshot.data() }));
@@ -60,7 +72,17 @@ export function watchFamily(familyId, onChange, onError) {
   return () => { stopPeople(); stopRelationships(); };
 }
 
-export async function savePerson(familyId, user, person) {
+export async function savePerson(familyId, user, person, {allowDuplicate = false} = {}) {
+  const existingPeople = allowDuplicate ? null : await getDocs(familyCollection(familyId, "people"));
+  const duplicate = existingPeople?.docs.some(snapshot => {
+    const data = snapshot.data();
+    return isDuplicatePerson({name:data.fullName, tamil:data.tamilName, birthYear:data.birthYear}, person);
+  });
+  if (duplicate) {
+    const error = new Error("DUPLICATE_PERSON");
+    error.code = "roots/duplicate-person";
+    throw error;
+  }
   const personRef = doc(familyCollection(familyId, "people"));
   const data = {
     fullName: person.name.trim(),
@@ -96,4 +118,14 @@ export async function saveRelationship(familyId, user, relationship) {
   };
   const snapshot = await addDoc(familyCollection(familyId, "relationships"), relation);
   return { id: snapshot.id, ...relation };
+}
+
+export async function updateRelationship(familyId, relationshipId, relationship) {
+  const fields = {
+    fromId: relationship.fromId,
+    toId: relationship.toId,
+    relationshipType: relationship.relationshipType,
+  };
+  await updateDoc(doc(db, "families", familyId, "relationships", relationshipId), fields);
+  return {id:relationshipId, ...fields};
 }

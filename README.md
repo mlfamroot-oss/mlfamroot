@@ -44,6 +44,7 @@ Open the local URL Vite prints. Create a production build with `npm run build`.
 ## Current implementation limits
 
 - Google sign-in, family membership lookup, people records, and parent/spouse relationship records are connected to Firestore, with live listeners for changes made by other approved users.
+- Adding a person checks for a matching name and birth identity; same-name relatives can still be added after the administrator confirms they are distinct. Administrators can edit an existing parent, child, or spouse connection.
 - Tamil-to-English and failed-request fallbacks use local phonetic rules and can be inaccurate for uncommon names, spellings, and regional pronunciations; edit the result before saving.
 - Membership approval is manual in the Firebase Console. A family-facing invitation and approvals screen is still needed.
 - Editing/removing people, event persistence, photo storage, exports, backup scheduling, and restore procedures are not yet implemented.

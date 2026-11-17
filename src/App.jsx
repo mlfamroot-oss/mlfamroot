@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { auth, familyId, firebaseConfigured, googleProvider } from "./firebaseClient";
 import { suggestTamilName, romanizeTamil } from "./nameTransliteration";
-import { loadFamily, savePerson, saveRelationship, watchFamily } from "./familyRepository";
+import { isDuplicatePerson, loadFamily, savePerson, saveRelationship, updateRelationship, watchFamily } from "./familyRepository";
 
 const copy = {
   en: {
@@ -34,7 +34,7 @@ const copy = {
     setupTitle:"Connect ROOTS to Firebase", setupSub:"Add your Firebase web app settings and family ID to the local environment file, then restart Vite.",
     setupSteps:"In Firebase Console, enable Google sign-in, create a Firestore database, publish the included firestore.rules, then add your first owner membership.",
     loading:"Loading your family space…", addLink:"Add relationship", parentOf:"Parent of", childOf:"Child of", spouseOf:"Spouse of", choosePerson:"Choose a person",
-    saveLink:"Save relationship", connectionError:"Could not load family data. Check the Firebase setup and Firestore rules."
+    saveLink:"Save relationship", editLink:"Edit connection", updateLink:"Save changes", duplicatePerson:"A person with this name and birth details is already recorded. Check the existing profile before adding.", duplicateConfirm:"I checked the existing profile; this is a different person.", possibleDuplicate:"A family member has the same name. Confirm this is a different person before adding.", connectionError:"Could not load family data. Check the Firebase setup and Firestore rules."
   },
   ta: {
     overview:"கண்ணோட்டம்", tree:"குடும்ப மரம்", timeline:"குடும்ப வரலாற்றுக் காலவரிசை", people:"உறுப்பினர்கள்",
@@ -57,7 +57,7 @@ const copy = {
     setupTitle:"ROOTS-ஐ Firebase-உடன் இணைக்கவும்", setupSub:"Firebase வலைச் செயலி அமைப்புகளையும் குடும்ப ID-யையும் உள்ளூர் environment கோப்பில் சேர்த்து Vite-ஐ மீண்டும் தொடங்கவும்.",
     setupSteps:"Firebase Console-இல் Google உள்நுழைவை இயக்கி, Firestore தரவுத்தளத்தை உருவாக்கி, firestore.rules-ஐ வெளியிட்டு, முதல் உரிமையாளர் உறுப்பினர் பதிவைச் சேர்க்கவும்.",
     loading:"குடும்ப இடத்தை ஏற்றுகிறது…", addLink:"உறவைச் சேர்க்க", parentOf:"பெற்றோர்", childOf:"குழந்தை", spouseOf:"துணைவர்", choosePerson:"ஒருவரைத் தேர்ந்தெடுக்கவும்",
-    saveLink:"உறவைச் சேமி", connectionError:"குடும்பத் தரவை ஏற்ற முடியவில்லை. Firebase அமைப்புகளையும் விதிகளையும் சரிபார்க்கவும்."
+    saveLink:"உறவைச் சேமி", editLink:"உறவைத் திருத்து", updateLink:"மாற்றங்களைச் சேமி", duplicatePerson:"இந்தப் பெயரும் பிறந்த விவரங்களும் கொண்ட பதிவு ஏற்கனவே உள்ளது. சேர்ப்பதற்கு முன் பழைய பதிவைச் சரிபார்க்கவும்.", duplicateConfirm:"பழைய பதிவைச் சரிபார்த்தேன்; இது வேறு நபர்.", possibleDuplicate:"அதே பெயரில் ஒருவர் உள்ளார். புதிய நபர் வேறு நபர் என்பதை உறுதிப்படுத்தவும்.", connectionError:"குடும்பத் தரவை ஏற்ற முடியவில்லை. Firebase அமைப்புகளையும் விதிகளையும் சரிபார்க்கவும்."
   }
 };
 
@@ -230,6 +230,7 @@ function App() {
   const [lang, setLang] = useState("en");
   const [showAdd, setShowAdd] = useState(false);
   const [showLink, setShowLink] = useState(false);
+  const [editingRelationship, setEditingRelationship] = useState(null);
   const [linkMode, setLinkMode] = useState("child");
   const [linkTargetId, setLinkTargetId] = useState("");
   const [saving, setSaving] = useState(false);
@@ -237,11 +238,15 @@ function App() {
   const [suggestingName, setSuggestingName] = useState(false);
   const [suggestionMessage, setSuggestionMessage] = useState("");
   const [isManuallyEdited, setIsManuallyEdited] = useState({name:false, tamil:false});
+  const [duplicateConfirmed, setDuplicateConfirmed] = useState(false);
   const transliterationRequest = useRef(0);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [newPerson, setNewPerson] = useState({name:"", tamil:"", gender:"Female", birthYear:"", place:"", status:"Living", generation:"4", branch:"New branch"});
   const t = copy[lang];
   const selected = people.find(p=>p.id===selectedId);
+  const normalizedFullName = newPerson.name.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
+  const hasDuplicatePerson = Boolean(normalizedFullName && people.some(person => isDuplicatePerson(person, newPerson)));
+  const hasSimilarName = Boolean(normalizedFullName && people.some(person => person.name.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ") === normalizedFullName));
   const isAdmin = membership?.status === "approved" && ["owner", "admin"].includes(membership.role);
   const canEditPeople = membership?.status === "approved" && ["owner", "admin", "contributor"].includes(membership.role);
 
@@ -351,17 +356,23 @@ function App() {
   const branches = [...new Set(people.map(p=>p.branch))];
   const generations = [...new Set(people.map(p=>String(p.generation)))].sort();
   const getPeople = ids => (ids||[]).map(id=>people.find(p=>p.id===id)).filter(Boolean);
+  const connectionRow = (person, relationship) => <div className="profile-relation-row" key={relationship.id}>
+    <PersonCard person={person} compact onClick={()=>setSelectedId(person.id)} lang={lang}/>
+    {isAdmin && <button type="button" className="icon-btn edit-connection-btn" title={t.editLink} aria-label={t.editLink} onClick={()=>openRelationshipEditor(relationship, person.id)}><Settings2 size={14}/></button>}
+  </div>;
 
   async function addMember(e) {
     e.preventDefault();
     if (!canEditPeople || !authUser) return;
+    if (hasSimilarName && !duplicateConfirmed) { setAppError(t.duplicatePerson); return; }
     setSaving(true); setAppError("");
     try {
-      const person = await savePerson(familyId, authUser, newPerson);
+      const person = await savePerson(familyId, authUser, newPerson, {allowDuplicate:duplicateConfirmed});
       setPeople(prev => [...prev, person]); setSelectedId(person.id); setShowAdd(false);
       setNewPerson({name:"", tamil:"", gender:"Female", birthYear:"", place:"", status:"Living", generation:"4", branch:"New branch"});
       setIsManuallyEdited({name:false,tamil:false}); setLastNameField("name");
-    } catch (error) { setAppError(error.message || t.connectionError); }
+      setDuplicateConfirmed(false);
+    } catch (error) { setAppError(error.message === "DUPLICATE_PERSON" ? t.duplicatePerson : error.message || t.connectionError); }
     finally { setSaving(false); }
   }
 
@@ -369,6 +380,7 @@ function App() {
     setNewPerson(current => ({...current, [field]: value}));
     setLastNameField(field);
     setIsManuallyEdited(current => ({...current, [field]:true}));
+    setDuplicateConfirmed(false);
     setSuggestionMessage("");
   }
 
@@ -409,15 +421,47 @@ function App() {
     if (linkMode === "parent") { fromId = linkTargetId; toId = selected.id; }
     if (linkMode === "spouse" && fromId.localeCompare(toId) > 0) [fromId, toId] = [toId, fromId];
     const relationshipType = linkMode === "spouse" ? "spouse" : "parent";
-    const existsAlready = relationships.some(item => item.relationshipType === relationshipType &&
-      (relationshipType === "spouse" ? item.fromId === fromId && item.toId === toId : item.fromId === fromId && item.toId === toId));
+    const existsAlready = relationships.some(item => item.id !== editingRelationship?.id && item.relationshipType === relationshipType &&
+      (relationshipType === "spouse"
+        ? (item.fromId === fromId && item.toId === toId) || (item.fromId === toId && item.toId === fromId)
+        : item.fromId === fromId && item.toId === toId));
     if (existsAlready) { setAppError("That relationship is already recorded."); return; }
     setSaving(true); setAppError("");
     try {
-      const relation = await saveRelationship(familyId, authUser, {fromId, toId, relationshipType});
-      setRelationships(prev => [...prev, relation]); setShowLink(false); setLinkTargetId("");
+      const relationData = {fromId, toId, relationshipType};
+      if (editingRelationship) {
+        const relation = await updateRelationship(familyId, editingRelationship.id, relationData);
+        setRelationships(prev => prev.map(item => item.id === relation.id ? {...item, ...relation} : item));
+      } else {
+        const relation = await saveRelationship(familyId, authUser, relationData);
+        setRelationships(prev => [...prev, relation]);
+      }
+      closeRelationshipModal();
     } catch (error) { setAppError(error.message || t.connectionError); }
     finally { setSaving(false); }
+  }
+
+  function openNewRelationship() {
+    setEditingRelationship(null);
+    setLinkMode("child");
+    setLinkTargetId("");
+    setAppError("");
+    setShowLink(true);
+  }
+
+  function openRelationshipEditor(relationship, otherId) {
+    setEditingRelationship(relationship);
+    setLinkMode(relationship.relationshipType === "spouse" ? "spouse" : relationship.fromId === selected?.id ? "child" : "parent");
+    setLinkTargetId(otherId);
+    setAppError("");
+    setShowLink(true);
+  }
+
+  function closeRelationshipModal() {
+    setShowLink(false);
+    setEditingRelationship(null);
+    setLinkTargetId("");
+    setAppError("");
   }
 
   const navItems = [
@@ -481,12 +525,12 @@ function App() {
           </div>
           <aside className="profile-panel panel">
             {selected ? <>
-              <div className="profile-top"><span>{t.profile}</span>{isAdmin && people.length > 1 && <button className="secondary-btn add-relation-btn" onClick={()=>setShowLink(true)}><Link2 size={14}/>{t.addLink}</button>}</div>
+              <div className="profile-top"><span>{t.profile}</span>{isAdmin && people.length > 1 && <button className="secondary-btn add-relation-btn" onClick={openNewRelationship}><Link2 size={14}/>{t.addLink}</button>}</div>
               <div className="profile-hero"><Avatar person={selected} size="xl"/><h2>{lang==="ta"&&selected.tamil?selected.tamil:selected.name}</h2><p>{lang==="ta"?selected.name:selected.tamil} · {selected.role}</p><span className={`life-badge ${selected.status==="Living"?"alive":"passed"}`}>{selected.status}</span></div>
               <div className="profile-details"><div><small>{t.gender}</small><b>{selected.gender}</b></div><div><small>{t.born}</small><b>{selected.birthYear||"Unknown"}</b></div><div><small>{t.generation}</small><b>{selected.generation}</b></div><div><small>{t.branch}</small><b>{selected.branch}</b></div><div className="wide"><small>{t.native}</small><b><MapPin size={14}/>{selected.place||"Not added"}</b></div></div>
-              <div className="relation-block"><h3>{t.parents}</h3>{getPeople(selected.parentIds).length?getPeople(selected.parentIds).map(p=><PersonCard key={p.id} person={p} compact onClick={()=>setSelectedId(p.id)} lang={lang}/>):<p className="muted">No parent links recorded</p>}</div>
-              <div className="relation-block"><h3>{t.spouse}</h3>{getPeople(selected.spouseIds).length?getPeople(selected.spouseIds).map(p=><PersonCard key={p.id} person={p} compact onClick={()=>setSelectedId(p.id)} lang={lang}/>):<p className="muted">No spouse recorded</p>}</div>
-              <div className="relation-block"><h3>{t.children}</h3>{getPeople(selected.children).length?getPeople(selected.children).map(p=><PersonCard key={p.id} person={p} compact onClick={()=>setSelectedId(p.id)} lang={lang}/>):<p className="muted">No children recorded</p>}</div>
+              <div className="relation-block"><h3>{t.parents}</h3>{getPeople(selected.parentIds).length?getPeople(selected.parentIds).map(p=>connectionRow(p,relationships.find(r=>r.relationshipType==="parent"&&r.fromId===p.id&&r.toId===selected.id))):<p className="muted">No parent links recorded</p>}</div>
+              <div className="relation-block"><h3>{t.spouse}</h3>{getPeople(selected.spouseIds).length?getPeople(selected.spouseIds).map(p=>connectionRow(p,relationships.find(r=>r.relationshipType==="spouse"&&((r.fromId===selected.id&&r.toId===p.id)||(r.fromId===p.id&&r.toId===selected.id))))):<p className="muted">No spouse recorded</p>}</div>
+              <div className="relation-block"><h3>{t.children}</h3>{getPeople(selected.children).length?getPeople(selected.children).map(p=>connectionRow(p,relationships.find(r=>r.relationshipType==="parent"&&r.fromId===selected.id&&r.toId===p.id))):<p className="muted">No children recorded</p>}</div>
             </>:<div className="empty-profile"><UserRound size={30}/><h3>{t.selectPerson}</h3><p>{t.selectSub}</p></div>}
           </aside>
         </section>}
@@ -506,18 +550,19 @@ function App() {
       <label>{t.fullName}<input required value={newPerson.name} onChange={e=>updateName("name",e.target.value)}/></label>
       <label>{t.tamilName}<input value={newPerson.tamil} onChange={e=>updateName("tamil",e.target.value)}/></label>
       <p className="field-hint">{t.nameHint}</p>
+      {hasSimilarName&&<><p className={hasDuplicatePerson?"connection-error":"duplicate-warning"} role="status">{hasDuplicatePerson?t.duplicatePerson:t.possibleDuplicate}</p><label className="duplicate-confirm"><input type="checkbox" checked={duplicateConfirmed} onChange={e=>setDuplicateConfirmed(e.target.checked)}/>{t.duplicateConfirm}</label></>}
       <div className="translation-actions"><button type="button" className="secondary-btn" onClick={suggestOtherName} disabled={suggestingName||(!newPerson.name.trim()&&!newPerson.tamil.trim())}>{t.suggestName}</button>{suggestingName&&<small className="transliteration-loading" role="status"><span className="transliteration-spinner" aria-hidden="true"/>{t.suggestingName}</small>}{suggestionMessage&&!suggestingName&&<small role="status">{suggestionMessage}</small>}</div>
-      <div className="form-row"><label>{t.gender}<select value={newPerson.gender} onChange={e=>setNewPerson({...newPerson,gender:e.target.value})}><option>Female</option><option>Male</option><option>Other</option></select></label><label>{t.year}<input type="number" min="1800" max="2026" value={newPerson.birthYear} onChange={e=>setNewPerson({...newPerson,birthYear:e.target.value})}/></label></div>
+      <div className="form-row"><label>{t.gender}<select value={newPerson.gender} onChange={e=>setNewPerson({...newPerson,gender:e.target.value})}><option>Female</option><option>Male</option><option>Other</option></select></label><label>{t.year}<input type="number" min="1800" max="2026" value={newPerson.birthYear} onChange={e=>{setNewPerson({...newPerson,birthYear:e.target.value});setDuplicateConfirmed(false)}}/></label></div>
       <label>{t.location}<input value={newPerson.place} onChange={e=>setNewPerson({...newPerson,place:e.target.value})} placeholder="Town / city, state"/></label>
       <div className="form-row"><label>{t.generation}<input type="number" min="1" value={newPerson.generation} onChange={e=>setNewPerson({...newPerson,generation:e.target.value})}/></label><label>{t.status}<select value={newPerson.status} onChange={e=>setNewPerson({...newPerson,status:e.target.value})}><option>Living</option><option>Deceased</option></select></label></div>
       <label>{t.branch}<input value={newPerson.branch} onChange={e=>setNewPerson({...newPerson,branch:e.target.value})}/></label>
-      <div className="modal-actions"><button type="button" className="secondary-btn" onClick={()=>setShowAdd(false)}>{t.cancel}</button><button type="submit" className="primary-btn" disabled={saving}><Plus size={16}/>{saving?"Saving…":t.save}</button></div>
+      <div className="modal-actions"><button type="button" className="secondary-btn" onClick={()=>setShowAdd(false)}>{t.cancel}</button><button type="submit" className="primary-btn" disabled={saving||(hasSimilarName&&!duplicateConfirmed)}><Plus size={16}/>{saving?"Saving…":t.save}</button></div>
     </form></div>}
-    {showLink && selected && <div className="modal-backdrop" onClick={()=>setShowLink(false)}><form className="modal" onSubmit={addRelationship} onClick={e=>e.stopPropagation()}><div className="modal-heading"><div><h2>{t.addLink}</h2><p>{selected.name}</p></div><button type="button" className="icon-btn" onClick={()=>setShowLink(false)}><X size={18}/></button></div>
+    {showLink && selected && <div className="modal-backdrop" onClick={closeRelationshipModal}><form className="modal" onSubmit={addRelationship} onClick={e=>e.stopPropagation()}><div className="modal-heading"><div><h2>{editingRelationship?t.editLink:t.addLink}</h2><p>{lang==="ta"&&selected.tamil?selected.tamil:selected.name}</p></div><button type="button" className="icon-btn" onClick={closeRelationshipModal}><X size={18}/></button></div>
       <label>Relationship<select value={linkMode} onChange={e=>setLinkMode(e.target.value)}><option value="child">{t.parentOf}</option><option value="parent">{t.childOf}</option><option value="spouse">{t.spouseOf}</option></select></label>
       <label>{t.choosePerson}<select required value={linkTargetId} onChange={e=>setLinkTargetId(e.target.value)}><option value="">Select a family member…</option>{people.filter(person=>person.id!==selected.id).map(person=><option key={person.id} value={person.id}>{lang==="ta"&&person.tamil?person.tamil:person.name}</option>)}</select></label>
       {appError && <p className="connection-error">{appError}</p>}
-      <div className="modal-actions"><button type="button" className="secondary-btn" onClick={()=>setShowLink(false)}>{t.cancel}</button><button type="submit" className="primary-btn" disabled={saving||!linkTargetId}><Link2 size={16}/>{saving?"Saving…":t.saveLink}</button></div>
+      <div className="modal-actions"><button type="button" className="secondary-btn" onClick={closeRelationshipModal}>{t.cancel}</button><button type="submit" className="primary-btn" disabled={saving||!linkTargetId}><Link2 size={16}/>{saving?"Saving…":editingRelationship?t.updateLink:t.saveLink}</button></div>
     </form></div>}
   </div>;
 }
