@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { auth, familyId, firebaseConfigured, googleProvider } from "./firebaseClient";
 import { suggestTamilName, romanizeTamil } from "./nameTransliteration";
-import { approveJoinRequest, deletePersonAndRelationships, deleteRelationship, isDuplicatePerson, loadFamily, rejectJoinRequest, requestFamilyAccess, savePerson, saveRelationships, updateRelationship, watchFamily, watchJoinRequests } from "./familyRepository";
+import { approveJoinRequest, deleteMemberAndRelationships, deleteRelationship, isDuplicatePerson, loadFamily, rejectJoinRequest, requestFamilyAccess, savePerson, saveRelationships, updateRelationship, watchFamily, watchJoinRequests } from "./familyRepository";
 import { getRelationshipLabel } from "./kinship";
 
 const copy = {
@@ -105,7 +105,7 @@ function PersonCard({person, selected, onClick, compact=false, lang="en", canDel
   </div>;
 }
 
-function FamilyTreeView({people, selectedId, onSelect, lang, canDelete=false, onDelete, deleteLabel}) {
+function GenerationView({people, selectedId, onSelect, lang, canDelete=false, onDelete, deleteLabel}) {
   const generations = [...new Set(people.map(person => person.generation))].sort((a,b)=>a-b);
   const getNames = ids => (ids || []).map(id => people.find(person => person.id === id)).filter(Boolean).map(person => lang === "ta" && person.tamil ? person.tamil : person.name);
   return <div className="family-tree-view">
@@ -139,7 +139,26 @@ function GenerationsCircleView({people, selectedId, onSelect, lang}) {
     (person.parentIds || []).forEach(id => { if (positions.has(id)) links.push({a:id,b:person.id,kind:"parent"}); });
     (person.spouseIds || []).forEach(id => { if (positions.has(id) && person.id < id) links.push({a:person.id,b:id,kind:"spouse"}); });
   });
-  return <div className="circle-view-scroll"><div className="circle-view" style={{width:size,height:size}}>
+  const mobileGap = Math.max(38,Math.max(1,...counts)*26/(2*Math.PI));
+  const mobileOuter = generations.length===1 ? Math.max(62,(counts[0]||1)*26/(2*Math.PI)) : 64+(generations.length-1)*mobileGap;
+  const mobileSize = Math.ceil((mobileOuter+34)*2), mobileCenter=mobileSize/2;
+  const mobilePositions = new Map();
+  generations.forEach((generation,ringIndex)=>{
+    const members=people.filter(person=>person.generation===generation);
+    const radius=generations.length===1?mobileOuter:64+ringIndex*mobileGap;
+    members.forEach((person,index)=>{
+      const angle=(2*Math.PI*index/members.length)-Math.PI/2;
+      mobilePositions.set(person.id,{x:mobileCenter+Math.cos(angle)*radius,y:mobileCenter+Math.sin(angle)*radius,index:index+1});
+    });
+  });
+  const mobileLinks=[];
+  people.forEach(person=>{
+    (person.parentIds||[]).forEach(id=>{if(mobilePositions.has(id)&&mobilePositions.has(person.id))mobileLinks.push({a:id,b:person.id,kind:"parent"})});
+    (person.spouseIds||[]).forEach(id=>{if(mobilePositions.has(id)&&id>person.id)mobileLinks.push({a:person.id,b:id,kind:"spouse"})});
+  });
+  const ringColors=["#6f89bf","#9b7bb5","#5f9b84","#c58a5d","#5e9ca8"];
+  return <div className="circle-view-scroll">
+    <div className="circle-desktop-view"><div className="circle-view" style={{width:size,height:size}}>
     <svg className="circle-links" width={size} height={size} aria-hidden="true">
       {generations.map((generation,index) => <circle key={generation} cx={center} cy={center} r={generations.length === 1 ? outerRadius : 120 + index * gap} className="generation-orbit"/>)}
       {links.map((link,index) => { const a=positions.get(link.a), b=positions.get(link.b); return <line key={`${link.a}-${link.b}-${index}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className={`circle-relationship ${link.kind}`}/>; })}
@@ -148,7 +167,39 @@ function GenerationsCircleView({people, selectedId, onSelect, lang}) {
     {people.map(person => { const p=positions.get(person.id); return <button key={person.id} className={`circle-person ${selectedId===person.id?"selected":""}`} style={{left:p.x,top:p.y}} onClick={()=>onSelect(person.id)} title={lang==="ta"&&person.tamil?`${person.tamil} · ${person.name}`:person.name}>
       <Avatar person={person} size="sm"/><span><strong>{lang==="ta"&&person.tamil?person.tamil:person.name}</strong><small>{person.birthYear || "—"}</small></span>
     </button>; })}
-  </div></div>;
+    </div></div>
+    <div className="circle-mobile-view">
+      <div className="mobile-circle-map-scroll"><svg className="mobile-circle-map" width={mobileSize} height={mobileSize} viewBox={`0 0 ${mobileSize} ${mobileSize}`} role="img" aria-label={lang==="ta"?"தலைமுறை வட்ட வரைபடம்":"Concentric generation map"}>
+        {generations.map((generation,index)=><circle key={generation} cx={mobileCenter} cy={mobileCenter} r={generations.length===1?mobileOuter:64+index*mobileGap} className="mobile-generation-orbit" style={{"--ring-color":ringColors[index%ringColors.length]}}/>)}
+        {mobileLinks.map((link,index)=>{const a=mobilePositions.get(link.a),b=mobilePositions.get(link.b);return <line key={`${link.a}-${link.b}-${index}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className={`mobile-circle-link ${link.kind}`}/>})}
+        {people.map(person=>{const p=mobilePositions.get(person.id);return <g key={person.id} className={`mobile-circle-dot ${selectedId===person.id?"selected":""}`} role="button" tabIndex="0" aria-label={`${lang==="ta"&&person.tamil?person.tamil:person.name}, ${lang==="ta"?`தலைமுறை ${person.generation}`:`generation ${person.generation}`}`} onClick={()=>onSelect(person.id)} onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();onSelect(person.id)}}}>
+          <circle cx={p.x} cy={p.y} r="11" className={person.gender==="Female"?"female":"male"}/><text x={p.x} y={p.y+3} textAnchor="middle">{p.index}</text>
+        </g>})}
+      </svg></div>
+      <div className="mobile-circle-key">{generations.map((generation,index)=><span key={generation}><i style={{background:ringColors[index%ringColors.length]}}/>{lang==="ta"?`தலைமுறை ${generation}`:`Generation ${generation}`}</span>)}</div>
+      <div className="mobile-generation-list">{generations.map(generation=>{
+        const members=people.filter(person=>person.generation===generation);
+        return <section className="mobile-generation-group" key={generation}><header><strong>{lang==="ta"?`தலைமுறை ${generation}`:`Generation ${generation}`}</strong><small>{members.length} {lang==="ta"?"உறுப்பினர்கள்":"members"}</small></header>
+          <div className="mobile-generation-people">{members.map((person,index)=><button type="button" key={person.id} className={`mobile-circle-person ${selectedId===person.id?"selected":""}`} onClick={()=>onSelect(person.id)}><span className="mobile-person-number">{index+1}</span><Avatar person={person} size="sm"/><span className="mobile-person-names"><strong>{person.name}</strong>{person.tamil&&<small lang="ta">{person.tamil}</small>}</span><ChevronRight size={15}/></button>)}</div>
+        </section>;
+      })}</div>
+    </div>
+  </div>;
+}
+
+function FocusView({person, parents, spouses, children, onSelect, lang, labels}) {
+  const displayName = value => lang === "ta" && value.tamil ? value.tamil : value.name;
+  const node = (relative, kind) => <button type="button" className={`focus-node ${kind}`} key={relative.id} onClick={()=>onSelect(relative.id)} title={displayName(relative)}>
+    <Avatar person={relative} size="sm"/><span><strong>{displayName(relative)}</strong><small>{lang === "ta" ? relative.name : relative.tamil || relative.birthYear || ""}</small></span>
+  </button>;
+  return <section className="focus-view" aria-label={lang==="ta"?"உறவுகள் வரைபடம்":"Relationship focus view"}>
+    {parents.length>0&&<><div className="focus-relative-row">{parents.map(person=>node(person,"parent"))}</div><div className="focus-stem" aria-hidden="true"/></>}
+    <div className="focus-core-row"><div className="focus-node focus-selected"><Avatar person={person} size="sm"/><span><strong>{displayName(person)}</strong><small>{lang==="ta"?person.name:person.tamil||person.birthYear||""}</small></span></div>
+      {spouses.map(relative=>node(relative,"spouse"))}</div>
+    {children.length>0&&<><div className="focus-stem" aria-hidden="true"/><div className="focus-relative-row">{children.map(relative=>node(relative,"child"))}</div></>}
+    {!parents.length&&!spouses.length&&!children.length&&<p className="focus-empty">{lang==="ta"?"இன்னும் உறவுகள் இணைக்கப்படவில்லை":"No relatives linked yet"}</p>}
+    <div className="focus-key"><span><i className="focus-key-parent"/>{labels.parents}</span><span><i className="focus-key-spouse"/>{labels.spouse}</span><span><i className="focus-key-child"/>{labels.children}</span></div>
+  </section>;
 }
 
 function FamilyGraph({people, selectedId, onSelect, lang, theme, query}) {
@@ -609,7 +660,7 @@ function App() {
     const target = pendingDeletePerson;
     setSaving(true); setAppError("");
     try {
-      await deletePersonAndRelationships(familyId,target.id);
+      await deleteMemberAndRelationships(target.id);
       setRelationships(current=>current.filter(item=>item.fromId!==target.id&&item.toId!==target.id));
       setPeople(current=>current.filter(person=>person.id!==target.id));
       if (selectedId===target.id) setSelectedId(people.find(person=>person.id!==target.id)?.id || "");
@@ -723,13 +774,14 @@ function App() {
               <select value={branch} onChange={e=>setBranch(e.target.value)}><option value="All">{t.branch}: All</option>{branches.map(b=><option key={b}>{b}</option>)}</select>
               <select value={status} onChange={e=>setStatus(e.target.value)}><option value="All">{t.status}: All</option><option value="Living">{t.living}</option><option value="Deceased">{t.deceased}</option></select>
             </div>
-            {view === "graph" && isAdmin ? <div className="tree-canvas graph-canvas">{graphPeople.length ? <FamilyGraph people={graphPeople} selectedId={selectedId} onSelect={setSelectedId} lang={lang} theme={theme} query={query}/> : <p className="graph-empty">{canEditPeople ? "Add a family member to start your graph." : t.empty}</p>}</div> : view === "circles" ? <div className="tree-canvas circular-canvas">{graphPeople.length ? <GenerationsCircleView people={graphPeople} selectedId={selectedId} onSelect={setSelectedId} lang={lang}/> : <p className="graph-empty">{canEditPeople ? "Add a family member to start your family tree." : t.empty}</p>}</div> : <div className="tree-canvas conventional-canvas">{graphPeople.length ? <FamilyTreeView people={graphPeople} selectedId={selectedId} onSelect={setSelectedId} lang={lang} canDelete={isAdmin} onDelete={person=>{setAppError("");setPendingDeletePerson(person)}} deleteLabel={lang==="ta"?"உறுப்பினரை நீக்கு":"Delete member"}/> : <p className="graph-empty">{canEditPeople ? "Add a family member to start your family tree." : t.empty}</p>}</div>}
+            {view === "graph" && isAdmin ? <div className="tree-canvas graph-canvas">{graphPeople.length ? <FamilyGraph people={graphPeople} selectedId={selectedId} onSelect={setSelectedId} lang={lang} theme={theme} query={query}/> : <p className="graph-empty">{canEditPeople ? "Add a family member to start your graph." : t.empty}</p>}</div> : view === "circles" ? <div className="tree-canvas circular-canvas">{graphPeople.length ? <GenerationsCircleView people={graphPeople} selectedId={selectedId} onSelect={setSelectedId} lang={lang}/> : <p className="graph-empty">{canEditPeople ? "Add a family member to start your family tree." : t.empty}</p>}</div> : <div className="tree-canvas conventional-canvas">{graphPeople.length ? <GenerationView people={graphPeople} selectedId={selectedId} onSelect={setSelectedId} lang={lang} canDelete={isAdmin} onDelete={person=>{setAppError("");setPendingDeletePerson(person)}} deleteLabel={lang==="ta"?"உறுப்பினரை நீக்கு":"Delete member"}/> : <p className="graph-empty">{canEditPeople ? "Add a family member to start your family tree." : t.empty}</p>}</div>}
             <div className="tree-footer"><span><i className="legend-dot male-dot"/> Male <i className="legend-dot female-dot"/> Female <i className="legend-dot deceased-dot"/> Deceased</span><span>{filtered.length} matching members</span></div>
           </div>
           <aside className="profile-panel panel">
             {selected ? <>
               <div className="profile-top"><span>{t.profile}</span>{isAdmin && people.length > 1 && <button className="secondary-btn add-relation-btn" onClick={openNewRelationship}><Link2 size={14}/>{t.addLink}</button>}</div>
               <div className="profile-hero"><Avatar person={selected} size="xl"/><h2>{lang==="ta"&&selected.tamil?selected.tamil:selected.name}</h2><p>{lang==="ta"?selected.name:selected.tamil} · {selected.role}</p><span className={`life-badge ${selected.status==="Living"?"alive":"passed"}`}>{selected.status}</span></div>
+              <FocusView person={selected} parents={getPeople(selected.parentIds)} spouses={getPeople(selected.spouseIds)} children={getPeople(selected.children)} onSelect={setSelectedId} lang={lang} labels={{parents:t.parents,spouse:t.spouse,children:t.children}}/>
               <div className="profile-details"><div><small>{t.gender}</small><b>{selected.gender}</b></div><div><small>{t.born}</small><b>{selected.birthYear||"Unknown"}</b></div><div><small>{t.generation}</small><b>{selected.generation}</b></div><div><small>{t.branch}</small><b>{selected.branch}</b></div><div className="wide"><small>{t.native}</small><b><MapPin size={14}/>{selected.place||"Not added"}</b></div></div>
               <div className="relation-block"><h3>{t.parents}</h3>{getPeople(selected.parentIds).length?getPeople(selected.parentIds).map(p=>connectionRow(p,relationships.find(r=>r.relationshipType==="parent"&&r.fromId===p.id&&r.toId===selected.id))):<p className="muted">No parent links recorded</p>}</div>
               <div className="relation-block"><h3>{t.spouse}</h3>{getPeople(selected.spouseIds).length?getPeople(selected.spouseIds).map(p=>connectionRow(p,relationships.find(r=>r.relationshipType==="spouse"&&((r.fromId===selected.id&&r.toId===p.id)||(r.fromId===p.id&&r.toId===selected.id))))):<p className="muted">No spouse recorded</p>}</div>

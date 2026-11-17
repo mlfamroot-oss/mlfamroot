@@ -1,7 +1,7 @@
 import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } from "firebase/firestore";
-import { db } from "./firebaseClient";
+import { db, familyId as configuredFamilyId } from "./firebaseClient";
 
 const familyCollection = (familyId, name) => collection(db, "families", familyId, name);
 
@@ -156,7 +156,8 @@ export async function deleteRelationship(familyId, relationshipId) {
   await deleteDoc(doc(db, "families", familyId, "relationships", relationshipId));
 }
 
-export async function deletePersonAndRelationships(familyId, personId) {
+export async function deleteMemberAndRelationships(personId, familyId = configuredFamilyId) {
+  if (!familyId) throw new Error("ROOTS family ID is not configured.");
   const relationships = familyCollection(familyId, "relationships");
   const [asParent, asChild] = await Promise.all([
     getDocs(query(relationships, where("fromId", "==", personId))),
