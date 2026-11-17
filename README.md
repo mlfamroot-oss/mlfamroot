@@ -4,9 +4,9 @@ ROOTS is a React family-history app using Firebase Authentication and Cloud Fire
 
 ## Security model
 
-- People must sign in with Google and have an approved membership document for the configured family.
-- Firestore rules deny access by default. Approved members can read the family; contributors can add people; owners and admins can manage relationships.
-- Membership and role grants cannot be created from the client. The first owner is provisioned manually in the Firebase Console.
+- People must sign in with Google and have an approved membership document for the configured family. A signed-in person without access can submit only their own join request.
+- Firestore rules deny access by default. Approved members can read family records; contributors can add people; owners and admins can approve members, manage relationships, and review join requests.
+- New users can request access after Google sign-in. Owners/admins can approve them as members or contributors from **Approvals**; the first owner is still provisioned manually in the Firebase Console.
 - The browser uses only Firebase web-app settings. Never add a service-account JSON file, Admin SDK credential, or other privileged key to this project.
 - The role comes from Firestore membership, not a preview toggle in the UI.
 
@@ -19,7 +19,7 @@ ROOTS is a React family-history app using Firebase Authentication and Cloud Fire
 5. Publish the included `firestore.rules` in **Firestore → Rules**. The matching `firebase.json` is included for Firebase CLI deployments too.
 6. Run the app and choose **Continue with Google**. The access screen displays the signed-in account's UID.
 7. In Firestore, create `families/{VITE_ROOTS_FAMILY_ID}` with a `name` field. Under it, create `members/{signed-in-UID}` with fields `email` (string), `role` (string: `owner`), and `status` (string: `approved`). This is the bootstrap step for the first family owner; the client cannot grant itself access.
-8. Sign out and back in. The approved owner can add family members and relationships. Add additional approved memberships through the Firebase Console until a dedicated invitation and approval screen is implemented.
+8. The first approved owner can add family members and relationships. Other relatives sign in with their own Google account, request access, and wait for an owner/admin to review the **Approvals** page. After approval, they can select **Check access**.
 
 Restart Vite after changing `.env`. Keep `.env` local; it is ignored by Git. Firebase browser configuration is not a privileged secret, but Firestore rules are what protect the records.
 
@@ -44,9 +44,8 @@ Open the local URL Vite prints. Create a production build with `npm run build`.
 ## Current implementation limits
 
 - Google sign-in, family membership lookup, people records, and parent/spouse relationship records are connected to Firestore, with live listeners for changes made by other approved users.
-- Adding a person checks for a matching name and birth identity; same-name relatives can still be added after the administrator confirms they are distinct. Administrators can edit an existing parent, child, or spouse connection.
+- Adding a person checks for a matching name and birth identity; same-name relatives can still be added after the administrator confirms they are distinct. Administrators can edit or remove an existing parent, child, or spouse connection. The interface blocks parent-child loops; this check is client-side, so only trusted admins should edit relationships.
 - Tamil-to-English and failed-request fallbacks use local phonetic rules and can be inaccurate for uncommon names, spellings, and regional pronunciations; edit the result before saving.
-- Membership approval is manual in the Firebase Console. A family-facing invitation and approvals screen is still needed.
 - Editing/removing people, event persistence, photo storage, exports, backup scheduling, and restore procedures are not yet implemented.
 - Review and test the Firestore rules in a Firebase Emulator before importing sensitive family history or inviting the wider family.
 - The legacy PostgreSQL draft in `database/initial-schema.sql` is not used by this Firebase build.

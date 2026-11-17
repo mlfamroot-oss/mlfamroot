@@ -52,12 +52,49 @@ service cloud.firestore {
       // Family creation, membership grants, and role changes are provisioned by an owner.
       allow create, update, delete: if false;
 
+      match /pending_users/{requestId} {
+        // Each signed-in user can create and read only their own request.
+        allow get: if (signedIn() && requestId == request.auth.uid) || canManageFamily(familyId);
+        allow list: if canManageFamily(familyId);
+        allow create: if signedIn()
+          && requestId == request.auth.uid
+          && request.resource.data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'status', 'createdAt', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'status', 'createdAt', 'updatedAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.email is string
+          && request.resource.data.displayName is string
+          && request.resource.data.role == 'member'
+          && request.resource.data.status == 'pending';
+        allow update: if canManageFamily(familyId)
+          || (signedIn()
+            && requestId == request.auth.uid
+            && resource.data.uid == request.auth.uid
+            && resource.data.status in ['pending', 'rejected']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['email', 'displayName', 'status', 'updatedAt'])
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.role == 'member'
+            && request.resource.data.status == 'pending');
+        allow delete: if canManageFamily(familyId);
+      }
+
       match /members/{memberId} {
         allow get: if signedIn() && memberId == request.auth.uid
           || (isApprovedMember(familyId) && canManageFamily(familyId));
         allow list: if canManageFamily(familyId);
-        // Client-side users cannot grant themselves or others access or change roles.
-        allow create, update, delete: if false;
+        // Owners/admins can approve only regular members or contributors, never grant admin/owner roles here.
+        allow create, update: if canManageFamily(familyId)
+          && request.resource.data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'status', 'approvedBy', 'approvedAt', 'createdAt', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'status', 'approvedBy', 'approvedAt', 'createdAt', 'updatedAt'])
+          && request.resource.data.uid == memberId
+          && request.resource.data.email is string
+          && request.resource.data.displayName is string
+          && request.resource.data.role in ['member', 'contributor']
+          && request.resource.data.status == 'approved'
+          && request.resource.data.approvedBy == request.auth.uid
+          && request.resource.data.approvedAt is timestamp
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.updatedAt is timestamp;
+        allow delete: if false;
       }
 
       match /people/{personId} {

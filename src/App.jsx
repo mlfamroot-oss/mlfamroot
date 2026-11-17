@@ -6,11 +6,11 @@ import {
   Search, Plus, Users, GitBranch, CalendarDays, MapPin, Settings2,
   Sun, Moon, Globe2, ChevronDown, ChevronRight, Heart, Upload,
   ShieldCheck, Download, Image, Menu, X, Filter, UserRound, Clock3, ZoomIn, ZoomOut, LocateFixed,
-  LogIn, LogOut, Link2
+  LogIn, LogOut, Link2, Trash2, Check, RefreshCw
 } from "lucide-react";
 import { auth, familyId, firebaseConfigured, googleProvider } from "./firebaseClient";
 import { suggestTamilName, romanizeTamil } from "./nameTransliteration";
-import { isDuplicatePerson, loadFamily, savePerson, saveRelationship, updateRelationship, watchFamily } from "./familyRepository";
+import { approveJoinRequest, deleteRelationship, isDuplicatePerson, loadFamily, rejectJoinRequest, requestFamilyAccess, savePerson, saveRelationship, updateRelationship, watchFamily, watchJoinRequests } from "./familyRepository";
 
 const copy = {
   en: {
@@ -30,11 +30,12 @@ const copy = {
     treeView:"Tree", graphView:"Graph", memberPreview:"Family member", adminPreview:"Administrator", previewRole:"Preview role",
     browseGenerations:"Browse family members by generation", exploreNetwork:"Explore the family network",
     signInGoogle:"Continue with Google", signOut:"Sign out", authTitle:"Sign in to ROOTS", authSub:"Use your approved Google account to access your family space.",
-    noAccessTitle:"Access is not set up yet", noAccessSub:"Ask your family administrator to approve this Google account.",
+    noAccessTitle:"Access is not set up yet", noAccessSub:"Request access with this Google account. A family owner or admin can approve it.", requestAccess:"Request family access", requestSent:"Request sent — waiting for a family admin.", requestAgain:"Request access again", checkAccess:"Check access", checkingAccess:"Checking…", firstOwnerSetup:"First owner setup", requestFailed:"Could not send the request. Please try again.",
+    approvalsTitle:"Family access requests", approvalsSub:"Review requests from relatives who signed in with Google.", noRequests:"No pending access requests.", approveMember:"Approve as member", approveContributor:"Approve as contributor", rejectRequest:"Decline", requestedBy:"Requested by", requestApproved:"Access approved.", requestRejected:"Request declined.", adminOnly:"Only family owners and admins can review access requests.",
     setupTitle:"Connect ROOTS to Firebase", setupSub:"Add your Firebase web app settings and family ID to the local environment file, then restart Vite.",
     setupSteps:"In Firebase Console, enable Google sign-in, create a Firestore database, publish the included firestore.rules, then add your first owner membership.",
     loading:"Loading your family space…", addLink:"Add relationship", parentOf:"Parent of", childOf:"Child of", spouseOf:"Spouse of", choosePerson:"Choose a person",
-    saveLink:"Save relationship", editLink:"Edit connection", updateLink:"Save changes", duplicatePerson:"A person with this name and birth details is already recorded. Check the existing profile before adding.", duplicateConfirm:"I checked the existing profile; this is a different person.", possibleDuplicate:"A family member has the same name. Confirm this is a different person before adding.", connectionError:"Could not load family data. Check the Firebase setup and Firestore rules."
+    saveLink:"Save relationship", editLink:"Edit connection", updateLink:"Save changes", removeConnection:"Remove connection", removeConnectionTitle:"Remove this family connection?", removeConnectionHint:"This only removes the relationship; both people remain in the family.", remove:"Remove connection", parentCycleError:"This would create a parent-child loop. Check the existing connections first.", duplicatePerson:"A person with this name and birth details is already recorded. Check the existing profile before adding.", duplicateConfirm:"I checked the existing profile; this is a different person.", possibleDuplicate:"A family member has the same name. Confirm this is a different person before adding.", connectionError:"Could not load family data. Check the Firebase setup and Firestore rules."
   },
   ta: {
     overview:"கண்ணோட்டம்", tree:"குடும்ப மரம்", timeline:"குடும்ப வரலாற்றுக் காலவரிசை", people:"உறுப்பினர்கள்",
@@ -53,17 +54,38 @@ const copy = {
     treeView:"குடும்ப மரம்", graphView:"வரைபடம்", memberPreview:"குடும்ப உறுப்பினர்", adminPreview:"நிர்வாகி", previewRole:"முன்னோட்டப் பங்கு",
     browseGenerations:"தலைமுறைகளின்படி குடும்ப உறுப்பினர்களைப் பாருங்கள்", exploreNetwork:"குடும்ப உறவுகளை ஆராயுங்கள்",
     signInGoogle:"Google மூலம் தொடரவும்", signOut:"வெளியேறு", authTitle:"ROOTS-இல் உள்நுழைக", authSub:"அனுமதிக்கப்பட்ட Google கணக்கைப் பயன்படுத்தவும்.",
-    noAccessTitle:"அணுகல் இன்னும் அமைக்கப்படவில்லை", noAccessSub:"இந்த Google கணக்கை குடும்ப நிர்வாகியிடம் அனுமதிக்கச் சொல்லுங்கள்.",
+    noAccessTitle:"அணுகல் இன்னும் அமைக்கப்படவில்லை", noAccessSub:"இந்த Google கணக்கில் அணுகல் கோருங்கள். குடும்ப உரிமையாளர் அல்லது நிர்வாகி அனுமதிக்கலாம்.", requestAccess:"குடும்ப அணுகலைக் கோருங்கள்", requestSent:"கோரிக்கை அனுப்பப்பட்டது — நிர்வாகியின் அனுமதிக்காகக் காத்திருக்கிறது.", requestAgain:"மீண்டும் அணுகலைக் கோருங்கள்", checkAccess:"அணுகலைச் சரிபார்க்கவும்", checkingAccess:"சரிபார்க்கிறது…", firstOwnerSetup:"முதல் உரிமையாளர் அமைப்பு", requestFailed:"கோரிக்கையை அனுப்ப முடியவில்லை. மீண்டும் முயற்சிக்கவும்.",
+    approvalsTitle:"குடும்ப அணுகல் கோரிக்கைகள்", approvalsSub:"Google மூலம் உள்நுழைந்த உறவினர்களின் கோரிக்கைகளை மதிப்பாய்வு செய்யவும்.", noRequests:"நிலுவையில் கோரிக்கைகள் இல்லை.", approveMember:"உறுப்பினராக அனுமதி", approveContributor:"பங்களிப்பாளராக அனுமதி", rejectRequest:"நிராகரி", requestedBy:"கோரியவர்", requestApproved:"அணுகல் அனுமதிக்கப்பட்டது.", requestRejected:"கோரிக்கை நிராகரிக்கப்பட்டது.", adminOnly:"குடும்ப உரிமையாளர் அல்லது நிர்வாகி மட்டுமே கோரிக்கைகளை மதிப்பாய்வு செய்யலாம்.",
     setupTitle:"ROOTS-ஐ Firebase-உடன் இணைக்கவும்", setupSub:"Firebase வலைச் செயலி அமைப்புகளையும் குடும்ப ID-யையும் உள்ளூர் environment கோப்பில் சேர்த்து Vite-ஐ மீண்டும் தொடங்கவும்.",
     setupSteps:"Firebase Console-இல் Google உள்நுழைவை இயக்கி, Firestore தரவுத்தளத்தை உருவாக்கி, firestore.rules-ஐ வெளியிட்டு, முதல் உரிமையாளர் உறுப்பினர் பதிவைச் சேர்க்கவும்.",
     loading:"குடும்ப இடத்தை ஏற்றுகிறது…", addLink:"உறவைச் சேர்க்க", parentOf:"பெற்றோர்", childOf:"குழந்தை", spouseOf:"துணைவர்", choosePerson:"ஒருவரைத் தேர்ந்தெடுக்கவும்",
-    saveLink:"உறவைச் சேமி", editLink:"உறவைத் திருத்து", updateLink:"மாற்றங்களைச் சேமி", duplicatePerson:"இந்தப் பெயரும் பிறந்த விவரங்களும் கொண்ட பதிவு ஏற்கனவே உள்ளது. சேர்ப்பதற்கு முன் பழைய பதிவைச் சரிபார்க்கவும்.", duplicateConfirm:"பழைய பதிவைச் சரிபார்த்தேன்; இது வேறு நபர்.", possibleDuplicate:"அதே பெயரில் ஒருவர் உள்ளார். புதிய நபர் வேறு நபர் என்பதை உறுதிப்படுத்தவும்.", connectionError:"குடும்பத் தரவை ஏற்ற முடியவில்லை. Firebase அமைப்புகளையும் விதிகளையும் சரிபார்க்கவும்."
+    saveLink:"உறவைச் சேமி", editLink:"உறவைத் திருத்து", updateLink:"மாற்றங்களைச் சேமி", removeConnection:"உறவை நீக்கு", removeConnectionTitle:"இந்தக் குடும்ப உறவை நீக்கவா?", removeConnectionHint:"உறவு மட்டும் நீக்கப்படும்; இருவரும் குடும்பத்தில் இருப்பார்கள்.", remove:"உறவை நீக்கு", parentCycleError:"இது பெற்றோர்–குழந்தை உறவு வட்டத்தை உருவாக்கும். ஏற்கனவே உள்ள உறவுகளைச் சரிபார்க்கவும்.", duplicatePerson:"இந்தப் பெயரும் பிறந்த விவரங்களும் கொண்ட பதிவு ஏற்கனவே உள்ளது. சேர்ப்பதற்கு முன் பழைய பதிவைச் சரிபார்க்கவும்.", duplicateConfirm:"பழைய பதிவைச் சரிபார்த்தேன்; இது வேறு நபர்.", possibleDuplicate:"அதே பெயரில் ஒருவர் உள்ளார். புதிய நபர் வேறு நபர் என்பதை உறுதிப்படுத்தவும்.", connectionError:"குடும்பத் தரவை ஏற்ற முடியவில்லை. Firebase அமைப்புகளையும் விதிகளையும் சரிபார்க்கவும்."
   }
 };
 
 function Avatar({person, size="md"}) {
   const initials = (person?.name || "?").split(" ").map(x=>x[0]).slice(0,2).join("").toUpperCase();
   return <div className={`avatar ${size} ${person?.gender === "Female" ? "female" : ""}`}>{initials}</div>;
+}
+
+function createsParentCycle(relationships, fromId, toId, ignoredId) {
+  const childrenByParent = new Map();
+  relationships.forEach(item => {
+    if (item.id === ignoredId || item.relationshipType !== "parent") return;
+    const children = childrenByParent.get(item.fromId) || [];
+    children.push(item.toId);
+    childrenByParent.set(item.fromId, children);
+  });
+  const pending = [toId];
+  const visited = new Set();
+  while (pending.length) {
+    const current = pending.pop();
+    if (current === fromId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    pending.push(...(childrenByParent.get(current) || []));
+  }
+  return false;
 }
 
 function PersonCard({person, selected, onClick, compact=false, lang="en"}) {
@@ -216,7 +238,12 @@ function App() {
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [membership, setMembership] = useState(null);
+  const [membershipRequest, setMembershipRequest] = useState(null);
   const [membershipLoading, setMembershipLoading] = useState(false);
+  const [requestingAccess, setRequestingAccess] = useState(false);
+  const [checkingAccess, setCheckingAccess] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [reviewingRequestId, setReviewingRequestId] = useState("");
   const [appError, setAppError] = useState("");
   const [activePage, setActivePage] = useState("tree");
   const [view, setView] = useState("tree");
@@ -231,6 +258,7 @@ function App() {
   const [showAdd, setShowAdd] = useState(false);
   const [showLink, setShowLink] = useState(false);
   const [editingRelationship, setEditingRelationship] = useState(null);
+  const [pendingDeleteRelationship, setPendingDeleteRelationship] = useState(null);
   const [linkMode, setLinkMode] = useState("child");
   const [linkTargetId, setLinkTargetId] = useState("");
   const [saving, setSaving] = useState(false);
@@ -249,6 +277,40 @@ function App() {
   const hasSimilarName = Boolean(normalizedFullName && people.some(person => person.name.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ") === normalizedFullName));
   const isAdmin = membership?.status === "approved" && ["owner", "admin"].includes(membership.role);
   const canEditPeople = membership?.status === "approved" && ["owner", "admin", "contributor"].includes(membership.role);
+
+  useEffect(() => {
+    if (!authUser || !firebaseConfigured) { setMembershipLoading(false); return; }
+    let active = true;
+    let stopWatching = null;
+    setMembershipLoading(true);
+    setAppError("");
+    loadFamily(familyId, authUser.uid)
+      .then(result => {
+        if (!active) return;
+        setMembership(result.member);
+        setMembershipRequest(result.request);
+        setPeople(result.people);
+        setRelationships(result.relationships);
+        if (result.people.length) setSelectedId(current => result.people.some(person => person.id === current) ? current : result.people[0].id);
+        setView(result.member?.status === "approved" && ["owner", "admin"].includes(result.member.role) ? "graph" : "tree");
+        if (result.member?.status === "approved") {
+          stopWatching = watchFamily(familyId, records => {
+            if (!active) return;
+            setPeople(records.people);
+            setRelationships(records.relationships);
+            setSelectedId(current => records.people.some(person => person.id === current) ? current : (records.people[0]?.id || ""));
+          }, error => { if (active) setAppError(error.message || t.connectionError); });
+        }
+      })
+      .catch(error => { if (active) setAppError(error.message || t.connectionError); })
+      .finally(() => { if (active) setMembershipLoading(false); });
+    return () => { active = false; stopWatching?.(); };
+  }, [authUser, membership?.status]);
+
+  useEffect(() => {
+    if (!isAdmin || activePage !== "approvals") { setPendingRequests([]); return undefined; }
+    return watchJoinRequests(familyId, setPendingRequests, error => setAppError(error.message || t.connectionError));
+  }, [isAdmin, activePage]);
 
   useEffect(() => {
     if (!showAdd) return undefined;
@@ -289,40 +351,13 @@ function App() {
       setAuthUser(user);
       setMembershipLoading(Boolean(user));
       setMembership(null);
+      setMembershipRequest(null);
       setPeople([]);
       setRelationships([]);
       setAppError("");
       setAuthLoading(false);
     });
   }, []);
-
-  useEffect(() => {
-    if (!authUser || !firebaseConfigured) { setMembershipLoading(false); return; }
-    let active = true;
-    let stopWatching = null;
-    setMembershipLoading(true);
-    setAppError("");
-    loadFamily(familyId, authUser.uid)
-      .then(result => {
-        if (!active) return;
-        setMembership(result.member);
-        setPeople(result.people);
-        setRelationships(result.relationships);
-        if (result.people.length) setSelectedId(current => result.people.some(person => person.id === current) ? current : result.people[0].id);
-        setView(result.member?.status === "approved" && ["owner", "admin"].includes(result.member.role) ? "graph" : "tree");
-        if (result.member?.status === "approved") {
-          stopWatching = watchFamily(familyId, records => {
-            if (!active) return;
-            setPeople(records.people);
-            setRelationships(records.relationships);
-            setSelectedId(current => records.people.some(person => person.id === current) ? current : (records.people[0]?.id || ""));
-          }, error => { if (active) setAppError(error.message || t.connectionError); });
-        }
-      })
-      .catch(error => { if (active) setAppError(error.message || t.connectionError); })
-      .finally(() => { if (active) setMembershipLoading(false); });
-    return () => { active = false; stopWatching?.(); };
-  }, [authUser]);
 
   async function handleGoogleSignIn() {
     setAppError("");
@@ -356,9 +391,9 @@ function App() {
   const branches = [...new Set(people.map(p=>p.branch))];
   const generations = [...new Set(people.map(p=>String(p.generation)))].sort();
   const getPeople = ids => (ids||[]).map(id=>people.find(p=>p.id===id)).filter(Boolean);
-  const connectionRow = (person, relationship) => <div className="profile-relation-row" key={relationship.id}>
+  const connectionRow = (person, relationship) => <div className="profile-relation-row" key={relationship?.id || person.id}>
     <PersonCard person={person} compact onClick={()=>setSelectedId(person.id)} lang={lang}/>
-    {isAdmin && <button type="button" className="icon-btn edit-connection-btn" title={t.editLink} aria-label={t.editLink} onClick={()=>openRelationshipEditor(relationship, person.id)}><Settings2 size={14}/></button>}
+    {isAdmin && relationship && <><button type="button" className="icon-btn edit-connection-btn" title={t.editLink} aria-label={t.editLink} onClick={()=>openRelationshipEditor(relationship, person.id)}><Settings2 size={14}/></button><button type="button" className="icon-btn delete-connection-btn" title={t.removeConnection} aria-label={t.removeConnection} onClick={()=>setPendingDeleteRelationship(relationship)}><Trash2 size={14}/></button></>}
   </div>;
 
   async function addMember(e) {
@@ -421,6 +456,8 @@ function App() {
     if (linkMode === "parent") { fromId = linkTargetId; toId = selected.id; }
     if (linkMode === "spouse" && fromId.localeCompare(toId) > 0) [fromId, toId] = [toId, fromId];
     const relationshipType = linkMode === "spouse" ? "spouse" : "parent";
+    if (fromId === toId) { setAppError("A person cannot be connected to themselves."); return; }
+    if (relationshipType === "parent" && createsParentCycle(relationships, fromId, toId, editingRelationship?.id)) { setAppError(t.parentCycleError); return; }
     const existsAlready = relationships.some(item => item.id !== editingRelationship?.id && item.relationshipType === relationshipType &&
       (relationshipType === "spouse"
         ? (item.fromId === fromId && item.toId === toId) || (item.fromId === toId && item.toId === fromId)
@@ -464,6 +501,67 @@ function App() {
     setAppError("");
   }
 
+  async function removeConnection() {
+    if (!isAdmin || !pendingDeleteRelationship) return;
+    setSaving(true);
+    setAppError("");
+    try {
+      await deleteRelationship(familyId, pendingDeleteRelationship.id);
+      setRelationships(current => current.filter(item => item.id !== pendingDeleteRelationship.id));
+      setPendingDeleteRelationship(null);
+    } catch (error) {
+      setAppError(error.message || t.connectionError);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitAccessRequest() {
+    if (!authUser || requestingAccess) return;
+    setRequestingAccess(true);
+    setAppError("");
+    try {
+      const request = await requestFamilyAccess(familyId, authUser);
+      setMembershipRequest(request);
+    } catch (error) {
+      setAppError(error.message || t.requestFailed);
+    } finally {
+      setRequestingAccess(false);
+    }
+  }
+
+  async function checkFamilyAccess() {
+    if (!authUser || checkingAccess) return;
+    setCheckingAccess(true);
+    setAppError("");
+    try {
+      const result = await loadFamily(familyId, authUser.uid);
+      setMembership(result.member);
+      setMembershipRequest(result.request);
+      setPeople(result.people);
+      setRelationships(result.relationships);
+      if (result.people.length) setSelectedId(current => result.people.some(person => person.id === current) ? current : result.people[0].id);
+    } catch (error) {
+      setAppError(error.message || t.connectionError);
+    } finally {
+      setCheckingAccess(false);
+    }
+  }
+
+  async function reviewAccessRequest(request, action, role = "member") {
+    if (!isAdmin || !authUser) return;
+    setReviewingRequestId(request.id);
+    setAppError("");
+    try {
+      if (action === "approve") await approveJoinRequest(familyId, request, role, authUser.uid);
+      else await rejectJoinRequest(familyId, request.id, authUser.uid);
+    } catch (error) {
+      setAppError(error.message || t.connectionError);
+    } finally {
+      setReviewingRequestId("");
+    }
+  }
+
   const navItems = [
     ["overview",t.overview,Users],["tree",t.tree,GitBranch],["timeline",t.timeline,CalendarDays],
     ["people",t.people,UserRound],["geography",t.geography,MapPin],["albums",t.albums,Image],
@@ -474,7 +572,7 @@ function App() {
   if (authLoading) return <div className="connection-screen"><div className="connection-card"><h1>{t.loading}</h1></div></div>;
   if (!authUser) return <div className="connection-screen"><div className="connection-card"><div className="brand-mark"><GitBranch size={22}/></div><h1>{t.authTitle}</h1><p>{t.authSub}</p>{appError && <p className="connection-error">{appError}</p>}<button className="primary-btn" onClick={handleGoogleSignIn}><LogIn size={17}/>{t.signInGoogle}</button></div></div>;
   if (membershipLoading) return <div className="connection-screen"><div className="connection-card"><h1>{t.loading}</h1></div></div>;
-  if (!membership || membership.status !== "approved") return <div className="connection-screen"><div className="connection-card"><div className="brand-mark"><ShieldCheck size={22}/></div><h1>{t.noAccessTitle}</h1><p>{t.noAccessSub}</p><div className="bootstrap-details"><b>Signed in as</b><span>{authUser.email || "Google account"}</span><b>Account ID</b><code>{authUser.uid}</code><b>Family document ID</b><code>{familyId}</code><small>For the first owner, create Firestore document <code>families/{"{"}familyId{"}"}/members/{"{"}uid{"}"}</code> with role <code>owner</code> and status <code>approved</code>. Then sign out and back in.</small></div>{appError && <p className="connection-error">{appError}</p>}<button className="secondary-btn" onClick={handleSignOut}><LogOut size={15}/>{t.signOut}</button></div></div>;
+  if (!membership || membership.status !== "approved") return <div className="connection-screen"><div className="connection-card"><div className="brand-mark"><ShieldCheck size={22}/></div><h1>{t.noAccessTitle}</h1><p>{t.noAccessSub}</p><div className="bootstrap-details"><b>Signed in as</b><span>{authUser.email || "Google account"}</span><b>Account ID</b><code>{authUser.uid}</code><b>Family document ID</b><code>{familyId}</code></div>{membershipRequest?.status === "pending" && <p className="request-status" role="status">{t.requestSent}</p>}{membershipRequest?.status === "rejected" && <p className="request-status" role="status">{t.requestRejected}</p>}{membershipRequest?.status !== "pending" && <button className="primary-btn" onClick={submitAccessRequest} disabled={requestingAccess}><LogIn size={16}/>{requestingAccess?"Sending…":membershipRequest?.status === "rejected"?t.requestAgain:t.requestAccess}</button>}{(membershipRequest?.status === "pending" || membership?.status === "pending") && <button className="secondary-btn" onClick={checkFamilyAccess} disabled={checkingAccess}><RefreshCw size={15}/>{checkingAccess?t.checkingAccess:t.checkAccess}</button>}<details className="bootstrap-help"><summary>{t.firstOwnerSetup}</summary><small>For the first owner only, create Firestore document <code>families/{"{"}familyId{"}"}/members/{"{"}uid{"}"}</code> with role <code>owner</code> and status <code>approved</code>. Then sign out and back in.</small></details>{appError && <p className="connection-error">{appError}</p>}<button className="secondary-btn" onClick={handleSignOut}><LogOut size={15}/>{t.signOut}</button></div></div>;
 
   return <div className={`app ${theme}`}>
     <aside className={`sidebar ${mobileMenu?"open":""}`}>
@@ -541,7 +639,9 @@ function App() {
 
         {activePage==="overview" && <section className="panel simple-page"><div className="panel-heading"><div><h2>Welcome to ROOTS</h2><p>Your private space for preserving family connections and memories.</p></div></div><div className="overview-cards"><div><GitBranch/><b>Explore the family tree</b><p>Explore a living network of family relationships.</p><button onClick={()=>setActivePage("tree")}>Open family tree <ChevronRight size={14}/></button></div><div><CalendarDays/><b>Preserve family history</b><p>Record births, marriages and important milestones.</p><button onClick={()=>setActivePage("timeline")}>Open timeline <ChevronRight size={14}/></button></div><div><Users/><b>Grow your family archive</b><p>Add relatives gradually and invite family contributors.</p><button onClick={()=>setShowAdd(true)}>Add a member <ChevronRight size={14}/></button></div></div></section>}
 
-        {["geography","albums","approvals","settings"].includes(activePage) && <section className="panel simple-page placeholder-page"><div className="placeholder-icon">{activePage==="geography"?<MapPin/>:activePage==="albums"?<Image/>:activePage==="approvals"?<ShieldCheck/>:<Settings2/>}</div><h2>{navItems.find(n=>n[0]===activePage)?.[1]}</h2><p>This module is planned for the next development phase. The interface and data model will be connected to secure cloud services before real family information is uploaded.</p>{activePage==="geography"&&<div className="map-placeholder"><MapPin size={24}/><b>Family geography map</b><span>Native places and current locations will appear here.</span></div>}{activePage==="albums"&&<div className="map-placeholder"><Upload size={24}/><b>Private family albums</b><span>Invited members will be able to contribute photographs.</span></div>}</section>}
+        {activePage==="approvals" && <section className="panel simple-page approvals-page"><div className="panel-heading"><div><h2>{t.approvalsTitle}</h2><p>{t.approvalsSub}</p></div>{isAdmin&&<span className="graph-count">{pendingRequests.length} pending</span>}</div>{!isAdmin?<p className="muted">{t.adminOnly}</p>:pendingRequests.length===0?<div className="approvals-empty"><ShieldCheck size={24}/><p>{t.noRequests}</p></div>:<div className="approval-list">{pendingRequests.map(request=><article className="approval-row" key={request.id}><div className="approval-person"><div className="user-avatar">{(request.displayName||request.email||"?").slice(0,1).toUpperCase()}</div><div><b>{request.displayName||"Family member"}</b><span>{request.email}</span><small>{t.requestedBy}</small></div></div><div className="approval-actions"><button className="primary-btn" onClick={()=>reviewAccessRequest(request,"approve","member")} disabled={reviewingRequestId===request.id}><Check size={14}/>{t.approveMember}</button><button className="secondary-btn" onClick={()=>reviewAccessRequest(request,"approve","contributor")} disabled={reviewingRequestId===request.id}><Check size={14}/>{t.approveContributor}</button><button className="text-danger-btn" onClick={()=>reviewAccessRequest(request,"reject")} disabled={reviewingRequestId===request.id}>{t.rejectRequest}</button></div></article>)}</div>}</section>}
+
+        {["geography","albums","settings"].includes(activePage) && <section className="panel simple-page placeholder-page"><div className="placeholder-icon">{activePage==="geography"?<MapPin/>:activePage==="albums"?<Image/>:<Settings2/>}</div><h2>{navItems.find(n=>n[0]===activePage)?.[1]}</h2><p>This module is planned for the next development phase. The interface and data model will be connected to secure cloud services before real family information is uploaded.</p>{activePage==="geography"&&<div className="map-placeholder"><MapPin size={24}/><b>Family geography map</b><span>Native places and current locations will appear here.</span></div>}{activePage==="albums"&&<div className="map-placeholder"><Upload size={24}/><b>Private family albums</b><span>Invited members will be able to contribute photographs.</span></div>}</section>}
       </div>
       <footer className="footer"><span>ROOTS · Our Family Heritage</span><span>Private family workspace · {familyId}</span></footer>
     </main>
@@ -564,6 +664,7 @@ function App() {
       {appError && <p className="connection-error">{appError}</p>}
       <div className="modal-actions"><button type="button" className="secondary-btn" onClick={closeRelationshipModal}>{t.cancel}</button><button type="submit" className="primary-btn" disabled={saving||!linkTargetId}><Link2 size={16}/>{saving?"Saving…":editingRelationship?t.updateLink:t.saveLink}</button></div>
     </form></div>}
+    {pendingDeleteRelationship && <div className="modal-backdrop" onClick={()=>setPendingDeleteRelationship(null)}><div className="modal confirm-delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-connection-title" onClick={e=>e.stopPropagation()}><div className="modal-heading"><div><h2 id="delete-connection-title">{t.removeConnectionTitle}</h2><p>{t.removeConnectionHint}</p></div><button type="button" className="icon-btn" onClick={()=>setPendingDeleteRelationship(null)}><X size={18}/></button></div><div className="modal-actions"><button type="button" className="secondary-btn" onClick={()=>setPendingDeleteRelationship(null)}>{t.cancel}</button><button type="button" className="danger-btn" onClick={removeConnection} disabled={saving}><Trash2 size={15}/>{saving?"Removing…":t.remove}</button></div></div></div>}
   </div>;
 }
 

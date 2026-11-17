@@ -1,5 +1,5 @@
 import {
-  addDoc, collection, doc, getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, updateDoc,
+  addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, updateDoc, writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebaseClient";
 
@@ -44,15 +44,18 @@ function mapFamilyRecords(peopleDocuments, relationshipDocuments) {
 export async function loadFamily(familyId, userId) {
   const memberRef = doc(db, "families", familyId, "members", userId);
   const memberSnapshot = await getDoc(memberRef);
-  if (!memberSnapshot.exists()) return { member: null, people: [], relationships: [] };
+  const requestRef = doc(db, "families", familyId, "pending_users", userId);
+  const requestSnapshot = memberSnapshot.exists() && memberSnapshot.data().status === "approved" ? null : await getDoc(requestRef);
+  const request = requestSnapshot?.exists() ? { id: requestSnapshot.id, ...requestSnapshot.data() } : null;
+  if (!memberSnapshot.exists()) return { member: null, request, people: [], relationships: [] };
   const member = { id: memberSnapshot.id, ...memberSnapshot.data() };
-  if (member.status !== "approved") return { member, people: [], relationships: [] };
+  if (member.status !== "approved") return { member, request, people: [], relationships: [] };
 
   const [peopleSnapshot, relationSnapshot] = await Promise.all([
     getDocs(familyCollection(familyId, "people")),
     getDocs(familyCollection(familyId, "relationships")),
   ]);
-  return { member, ...mapFamilyRecords(peopleSnapshot.docs, relationSnapshot.docs) };
+  return { member, request, ...mapFamilyRecords(peopleSnapshot.docs, relationSnapshot.docs) };
 }
 
 export function watchFamily(familyId, onChange, onError) {
@@ -128,4 +131,58 @@ export async function updateRelationship(familyId, relationshipId, relationship)
   };
   await updateDoc(doc(db, "families", familyId, "relationships", relationshipId), fields);
   return {id:relationshipId, ...fields};
+}
+
+export async function deleteRelationship(familyId, relationshipId) {
+  await deleteDoc(doc(db, "families", familyId, "relationships", relationshipId));
+}
+
+export async function requestFamilyAccess(familyId, user) {
+  const requestRef = doc(db, "families", familyId, "pending_users", user.uid);
+  const existing = await getDoc(requestRef);
+  if (existing.exists() && existing.data().status === "pending") return { id: existing.id, ...existing.data() };
+  const data = {
+    uid: user.uid,
+    email: user.email || "",
+    displayName: user.displayName || user.email || "Family member",
+    status: "pending",
+    role: "member",
+    createdAt: existing.exists() && existing.data().createdAt ? existing.data().createdAt : serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  await setDoc(requestRef, data);
+  return { id: user.uid, ...data };
+}
+
+export function watchJoinRequests(familyId, onChange, onError) {
+  return onSnapshot(familyCollection(familyId, "pending_users"), snapshot => {
+    onChange(snapshot.docs.map(item => ({ id: item.id, ...item.data() })).filter(item => item.status === "pending"));
+  }, onError);
+}
+
+export async function approveJoinRequest(familyId, request, role, reviewerUid) {
+  const batch = writeBatch(db);
+  const memberRef = doc(db, "families", familyId, "members", request.uid);
+  const requestRef = doc(db, "families", familyId, "pending_users", request.uid);
+  batch.set(memberRef, {
+    uid: request.uid,
+    email: request.email || "",
+    displayName: request.displayName || "Family member",
+    role: role === "contributor" ? "contributor" : "member",
+    status: "approved",
+    approvedBy: reviewerUid,
+    approvedAt: serverTimestamp(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  batch.update(requestRef, { status: "approved", role: role === "contributor" ? "contributor" : "member", reviewedBy: reviewerUid, reviewedAt: serverTimestamp() });
+  await batch.commit();
+}
+
+export async function rejectJoinRequest(familyId, requestId, reviewerUid) {
+  await updateDoc(doc(db, "families", familyId, "pending_users", requestId), {
+    status: "rejected",
+    reviewedBy: reviewerUid,
+    reviewedAt: serverTimestamp(),
+  });
 }
